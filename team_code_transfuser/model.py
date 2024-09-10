@@ -606,6 +606,7 @@ class LidarCenterNet(nn.Module):
         # pid controller
         self.turn_controller = PIDController(K_P=config.turn_KP, K_I=config.turn_KI, K_D=config.turn_KD, n=config.turn_n)
         self.speed_controller = PIDController(K_P=config.speed_KP, K_I=config.speed_KI, K_D=config.speed_KD, n=config.speed_n)
+        self.aug_degrees = [0] # NOTE added Test time data augmentation. Unused we only augment by 0 degree.
 
     def forward_gru(self, z, target_point):
         z = self.join(z)
@@ -710,9 +711,19 @@ class LidarCenterNet(nn.Module):
 
         # filter bbox based on the confidence of the prediction
         bboxes = bboxes[bboxes[:, -1] > self.config.bb_confidence_threshold]
+        # rotated_bboxes = []
+        # for bbox in bboxes.detach().cpu().numpy():
+        #     bbox = self.get_bbox_local_metric(bbox)
+        #     rotated_bboxes.append(bbox)
+            
         rotated_bboxes = []
+        i_count = 0
         for bbox in bboxes.detach().cpu().numpy():
+            # NOTE: added
+            # print('original bbox:', i_count, bbox)
             bbox = self.get_bbox_local_metric(bbox)
+            # print('rotated bbox:', i_count, bbox)
+            i_count += 1
             rotated_bboxes.append(bbox)
 
         self.i += 1
@@ -726,6 +737,14 @@ class LidarCenterNet(nn.Module):
                             pred_wp, pred_bev, pred_semantic, pred_depth, bboxes, self.device,
                             gt_bboxes=None, expert_waypoints=expert_waypoints, stuck_detector=stuck_detector, forced_move=forced_move)
 
+        # NOTE: added - edit something in visualized_model_io
+        pred_bev = self.pred_bev(features[0])
+        pred_bev = F.interpolate(pred_bev, (self.config.bev_resolution_height, self.config.bev_resolution_width), mode='bilinear', align_corners=True)
+        pred_semantic = self.seg_decoder(image_features_grid)
+        pred_depth = self.depth_decoder(image_features_grid)
+        self.visualize_model_io(save_path, 0, self.config, rgb, lidar_bev, target_point,
+                            pred_wp, pred_bev, pred_semantic, pred_depth, bboxes, self.device,
+                            gt_bboxes=None, expert_waypoints=expert_waypoints, stuck_detector=stuck_detector, forced_move=forced_move)
 
         return pred_wp, rotated_bboxes
 
@@ -802,6 +821,94 @@ class LidarCenterNet(nn.Module):
                                    gt_bboxes=label, expert_waypoints=ego_waypoint, stuck_detector=0, forced_move=False)
 
         return loss
+    
+    # forward:
+    def forward_lossncon(self, rgb, lidar_bev, ego_waypoint, target_point,
+                         target_point_image, ego_vel, bev, label, depth, semantic,
+                         num_points=None, save_path=None, bev_points=None, cam_points=None,
+                         is_stuck=False):
+        loss = {}
+
+        if(self.use_point_pillars == True):
+            lidar_bev = self.point_pillar_net(lidar_bev, num_points)
+            lidar_bev = torch.rot90(lidar_bev, -1, dims=(2, 3)) #For consitency this is also done in voxelization
+
+
+        if self.use_target_point_image:
+            lidar_bev = torch.cat((lidar_bev, target_point_image), dim=1)
+
+        if (self.backbone == 'transFuser'):
+            features, image_features_grid, fused_features = self._model(rgb, lidar_bev, ego_vel)
+        elif (self.backbone == 'late_fusion'):
+            features, image_features_grid, fused_features = self._model(rgb, lidar_bev, ego_vel)
+        elif (self.backbone == 'geometric_fusion'):
+            features, image_features_grid, fused_features = self._model(rgb, lidar_bev, ego_vel, bev_points, cam_points)
+        elif (self.backbone == 'latentTF'):
+            features, image_features_grid, fused_features = self._model(rgb, lidar_bev, ego_vel)
+        else:
+            raise ("The chosen vision backbone does not exist. The options are: transFuser, late_fusion, geometric_fusion, latentTF")
+
+
+        pred_wp, _, _, _, _ = self.forward_gru(fused_features, target_point)
+
+        steers, throttles, brakes = [], [], []
+        # NOTE: use pred_wp to get control
+        for i in range(pred_wp.size(0)):
+            pred_wp_i = pred_wp[i].unsqueeze(0)
+            ego_vel_i = torch.FloatTensor([ego_vel[i]]).to('cuda', dtype=torch.float32)
+            steer, throttle, brake = self.control_pid(pred_wp_i, ego_vel_i, is_stuck)
+            steers.append(steer)
+            throttles.append(throttle)
+            brakes.append(brake)
+
+        # pred topdown view
+        pred_bev = self.pred_bev(features[0])
+        pred_bev = F.interpolate(pred_bev, (self.config.bev_resolution_height, self.config.bev_resolution_width), mode='bilinear', align_corners=True)
+
+        weight = torch.from_numpy(np.array([1., 1., 3.])).to(dtype=torch.float32, device=pred_bev.device)
+        loss_bev = F.cross_entropy(pred_bev, bev, weight=weight).mean()
+
+        loss_wp = torch.mean(torch.abs(pred_wp - ego_waypoint))
+        loss.update({
+            "loss_wp": loss_wp,
+            "loss_bev": loss_bev
+        })
+
+        preds = self.head([features[0]])
+
+        gt_labels = torch.zeros_like(label[:, :, 0])
+        gt_bboxes_ignore = label.sum(dim=-1) == 0.
+        loss_bbox = self.head.loss(preds[0], preds[1], preds[2], preds[3], preds[4], preds[5], preds[6],
+                                [label], gt_labels=[gt_labels], gt_bboxes_ignore=[gt_bboxes_ignore], img_metas=None)
+        
+        loss.update(loss_bbox)
+
+        if self.config.multitask:
+            pred_semantic = self.seg_decoder(image_features_grid)
+            pred_depth = self.depth_decoder(image_features_grid)
+            loss_semantic = self.config.ls_seg * F.cross_entropy(pred_semantic, semantic).mean()
+            loss_depth = self.config.ls_depth * F.l1_loss(pred_depth, depth).mean()
+            loss.update({
+                "loss_depth": loss_depth,
+                "loss_semantic": loss_semantic
+            })
+        else:
+            loss.update({
+                "loss_depth": torch.zeros_like(loss_wp),
+                "loss_semantic": torch.zeros_like(loss_wp)
+            })
+
+        self.i += 1
+        if ((self.config.debug == True) and (self.i % self.config.train_debug_save_freq == 0) and (save_path != None)):
+            with torch.no_grad():
+                results = self.head.get_bboxes(preds[0], preds[1], preds[2], preds[3], preds[4], preds[5], preds[6])
+                bboxes, _ = results[0]
+                bboxes = bboxes[bboxes[:, -1] > self.config.bb_confidence_threshold]
+                self.visualize_model_io(save_path, self.i, self.config, rgb, lidar_bev, target_point,
+                                   pred_wp, pred_bev, pred_semantic, pred_depth, bboxes, self.device,
+                                   gt_bboxes=label, expert_waypoints=ego_waypoint, stuck_detector=0, forced_move=False)
+
+        return loss, steers, throttles, brakes
 
 
     # Converts the coordinate system to x front y right, vehicle center at the origin.
@@ -839,7 +946,8 @@ class LidarCenterNet(nn.Module):
             bbox[point_index] = R @ bbox[point_index]
             bbox[point_index] = bbox[point_index] + np.array([center_old_coordinate_sys[0], center_old_coordinate_sys[1],0])
 
-        return bbox, brake, confidence
+        # NOTE: added speed
+        return bbox, brake, confidence, speed
 
     # this is different
     def get_rotated_bbox(self, bbox):
@@ -1024,7 +1132,11 @@ class LidarCenterNet(nn.Module):
         rgb_image = cv2.resize(rgb_image, (1280 + 128, 320 + 32))
         assert (config.multitask)
         images = np.concatenate((bev_image, images, ds_image), axis=1)
+        # NOTE: adjust code
+        cv2.imshow("wp-occupied/wp-bb/bev-lidar/depth ", images)
 
         images = np.concatenate((rgb_image, images), axis=0)
 
-        cv2.imwrite(str(save_path + ("/%d.png" % (step // 2))), images)
+        # NOTE: original code
+        # cv2.imwrite(str(save_path + ("/%d.png" % (step // 2))), images)
+        

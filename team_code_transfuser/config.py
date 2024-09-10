@@ -24,6 +24,11 @@ class GlobalConfig:
     camera_rot_0 = [0.0, 0.0, 0.0] # Roll Pitch Yaw of camera 0 in degree
     camera_rot_1 = [0.0, 0.0, -60.0] # Roll Pitch Yaw of camera 1 in degree
     camera_rot_2 = [0.0, 0.0, 60.0] # Roll Pitch Yaw of camera 2 in degree
+    cam_config = {
+            'width': 320,
+            'height': 160,
+            'fov': 60
+        }
 
     bev_resolution_width  = 160 # Width resoultion the BEV loss is upsampled to. Double check if width and height are swapped if you want to make them non symmetric.
     bev_resolution_height = 160 # Height resoultion the BEV loss is upsampled to. Double check if width and height are swapped if you want to make them non symmetric.
@@ -131,9 +136,19 @@ class GlobalConfig:
     img_anchors = img_vert_anchors * img_horz_anchors
     lidar_anchors = lidar_vert_anchors * lidar_horz_anchors
 
+    # NOTE: origninal detailed_losses
+    # detailed_losses = ['loss_wp', 'loss_bev', 'loss_depth', 'loss_semantic', 'loss_center_heatmap', 'loss_wh',
+    #                    'loss_offset', 'loss_yaw_class', 'loss_yaw_res', 'loss_velocity', 'loss_brake']    
+    # detailed_losses_weights = [1.0, 1.0, 1.0, 1.0, 0.2, 0.2, 0.2, 0.2, 0.2, 0.0, 0.0]
+    # NOTE: detailed losses with large loss withold
+    # detailed_losses_weights = [1.0, 1.0, 1.0, 1.0, 0.0, 0.2, 0.2, 0.0, 0.2, 0.0, 0.0] # change heatmap, yaw class to 0 (loss to much?)
+    
+    # NOTE: detailed losses with SC losses
     detailed_losses = ['loss_wp', 'loss_bev', 'loss_depth', 'loss_semantic', 'loss_center_heatmap', 'loss_wh',
-                       'loss_offset', 'loss_yaw_class', 'loss_yaw_res', 'loss_velocity', 'loss_brake']
-    detailed_losses_weights = [1.0, 1.0, 1.0, 1.0, 0.2, 0.2, 0.2, 0.2, 0.2, 0.0, 0.0]
+                       'loss_offset', 'loss_yaw_class', 'loss_yaw_res', 'loss_velocity', 'loss_brake',
+                       'throttle_sc', 'steer_sc', 'brake_sc']
+    detailed_losses_weights = [1.0, 1.0, 1.0, 1.0, 0.2, 0.2, 0.2, 0.2, 0.2, 0.0, 0.0, 400.0, 200.0, 0.02]
+    
 
     perception_output_features = 512 # Number of features outputted by the perception branch.
     bev_features_chanels = 64 # Number of channels for the BEV feature pyramid
@@ -147,8 +162,10 @@ class GlobalConfig:
     deconv_scale_factor_2 = 4 # Scale factor, of how much the grid size will be interpolated after the second layer
 
     gps_buffer_max_len = 100 # Number of past gps measurements that we track.
+
     carla_frame_rate = 1.0 / 20.0 # CARLA frame rate in milliseconds
     carla_fps = 20 # Simulator Frames per second
+
     iou_treshold_nms = 0.2  # Iou threshold used for Non Maximum suppression on the Bounding Box predictions for the ensembles
     steer_damping = 0.5 # Damping factor by which the steering will be multiplied when braking
     route_planner_min_distance = 7.5

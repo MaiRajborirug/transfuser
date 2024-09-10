@@ -92,8 +92,15 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
                 if(self.config.sync_batch_norm == True):
                     net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(net) # Model was trained with Sync. Batch Norm. Need to convert it otherwise parameters will load incorrectly.
                 state_dict = torch.load(os.path.join(path_to_conf_file, file), map_location='cuda:0')
-                state_dict = {k[7:]: v for k, v in state_dict.items()} # Removes the .module coming from the Distributed Training. Remove this if you want to evaluate a model trained without DDP.
-                net.load_state_dict(state_dict, strict=False)
+                new_state_dict = {}
+                for (k, v) in state_dict.items():
+                    if k.startswith('module.'):
+                        new_state_dict[k[7:]] = v
+                    else:
+                        new_state_dict[k] = v
+                print(new_state_dict['_model.image_encoder.features.stem.conv.weight'][0][0][0]) # test
+                net.load_state_dict(new_state_dict, strict=False)
+                print(net._model.image_encoder.features.stem.conv.weight[0][0][0]) # test
                 net.cuda()
                 net.eval()
                 self.nets.append(net)
@@ -297,6 +304,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
                     pred_wp, _ = self.nets[i].forward_ego(image, lidar_bev, target_point, target_point_image, velocity,
                                                           num_points=num_points, save_path=SAVE_PATH, stuck_detector=self.stuck_detector,
                                                           forced_move=is_stuck, debug=self.config.debug, rgb_back=self.rgb_back)
+                    # NOTE: added
                 elif (self.backbone == 'late_fusion'):
                     pred_wp, _ = self.nets[i].forward_ego(image, lidar_bev, target_point, target_point_image, velocity, num_points=num_points)
                 elif (self.backbone == 'geometric_fusion'):
@@ -391,6 +399,8 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         self.control = control
 
         self.update_gps_buffer(self.control, tick_data['compass'], tick_data['speed'])
+        # NOTE: added
+        # cv2.waitKey(1)
         return control
 
     def bb_detected_in_front_of_vehicle(self, ego_speed):

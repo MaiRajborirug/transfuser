@@ -22,7 +22,7 @@ from leaderboard.utils.checkpoint_tools import fetch_dict, save_dict, create_def
 PENALTY_COLLISION_PEDESTRIAN = 0.50
 PENALTY_COLLISION_VEHICLE = 0.60
 PENALTY_COLLISION_STATIC = 0.65
-PENALTY_TRAFFIC_LIGHT = 0.70
+PENALTY_TRAFFIC_LIGHT = 1.0  # 0.7, now we don't care about traffic and stop sign
 PENALTY_STOP = 1.00 # 0.80
 
 
@@ -47,6 +47,12 @@ class RouteRecord():
             'score_route': 0,
             'score_penalty': 0,
             'score_composed': 0
+        }
+        # NOTE: added
+        self.collisions ={
+            'collisions_pedestrian': 0,
+            'collisions_vehicle': 0,
+            'collisions_layout': 0,
         }
 
         self.meta = {}
@@ -147,14 +153,17 @@ class StatisticsManager(object):
                         if event.get_type() == TrafficEventType.COLLISION_STATIC:
                             score_penalty *= PENALTY_COLLISION_STATIC
                             route_record.infractions['collisions_layout'].append(event.get_message())
+                            route_record.collisions['collisions_layout'] += 1 # NOTE: added
 
                         elif event.get_type() == TrafficEventType.COLLISION_PEDESTRIAN:
                             score_penalty *= PENALTY_COLLISION_PEDESTRIAN
                             route_record.infractions['collisions_pedestrian'].append(event.get_message())
+                            route_record.collisions['collisions_pedestrian'] += 1 # NOTE: added
 
                         elif event.get_type() == TrafficEventType.COLLISION_VEHICLE:
                             score_penalty *= PENALTY_COLLISION_VEHICLE
                             route_record.infractions['collisions_vehicle'].append(event.get_message())
+                            route_record.collisions['collisions_vehicle'] += 1 # NOTE: added
 
                         elif event.get_type() == TrafficEventType.OUTSIDE_ROUTE_LANES_INFRACTION:
                             score_penalty *= (1 - event.get_dict()['percentage'] / 100)
@@ -201,7 +210,11 @@ class StatisticsManager(object):
 
         return route_record
 
-    def compute_global_statistics(self, total_routes):
+    def compute_global_statistics(self, total_routes, total=True):
+        # NOTE: add a choice to not use total_routes when total=False and use leng(self._registry_route_records) instead
+        if total==False:
+            total_routes = len(self._registry_route_records) # adjust values
+        
         global_record = RouteRecord()
         global_record.route_id = -1
         global_record.index = -1
@@ -212,6 +225,11 @@ class StatisticsManager(object):
                 global_record.scores['score_route'] += route_record.scores['score_route']
                 global_record.scores['score_penalty'] += route_record.scores['score_penalty']
                 global_record.scores['score_composed'] += route_record.scores['score_composed']
+                
+                # NOTE: added collisions
+                global_record.collisions['collisions_pedestrian'] += route_record.collisions['collisions_pedestrian']
+                global_record.collisions['collisions_vehicle'] += route_record.collisions['collisions_vehicle']
+                global_record.collisions['collisions_layout'] += route_record.collisions['collisions_layout']
 
                 for key in global_record.infractions.keys():
                     route_length_kms = max(route_record.scores['score_route'] * route_record.meta['route_length'] / 1000.0, 0.001)
@@ -231,6 +249,11 @@ class StatisticsManager(object):
         global_record.scores['score_route'] /= float(total_routes)
         global_record.scores['score_penalty'] /= float(total_routes)
         global_record.scores['score_composed'] /= float(total_routes)
+        
+        # NOTE: added collisions
+        global_record.collisions['collisions_pedestrian'] /= float(total_routes)
+        global_record.collisions['collisions_vehicle'] /= float(total_routes)
+        global_record.collisions['collisions_layout'] /= float(total_routes)
 
         return global_record
 
@@ -272,7 +295,11 @@ class StatisticsManager(object):
                           '{:.3f}'.format(stats_dict['infractions']['outside_route_lanes']),
                           '{:.3f}'.format(stats_dict['infractions']['route_dev']),
                           '{:.3f}'.format(stats_dict['infractions']['route_timeout']),
-                          '{:.3f}'.format(stats_dict['infractions']['vehicle_blocked'])
+                          '{:.3f}'.format(stats_dict['infractions']['vehicle_blocked']),
+                          # NOTE: added collisions
+                          '{:.3f}'.format(stats_dict['collisions']['collisions_pedestrian']),
+                          '{:.3f}'.format(stats_dict['collisions']['collisions_vehicle']),
+                          '{:.3f}'.format(stats_dict['collisions']['collisions_layout']),
                           ]
 
         data['labels'] = ['Avg. driving score',
@@ -286,7 +313,11 @@ class StatisticsManager(object):
                           'Off-road infractions',
                           'Route deviations',
                           'Route timeouts',
-                          'Agent blocked'
+                          'Agent blocked',
+                          # NOTE: added collisions
+                          'Collisions with pedestrians',
+                          'Collisions with vehicles',
+                          'Collisions with layout',
                           ]
 
         entry_status = "Finished"

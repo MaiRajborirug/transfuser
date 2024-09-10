@@ -35,6 +35,12 @@ from leaderboard.autoagents.agent_wrapper_local import  AgentWrapper, AgentError
 from leaderboard.utils.statistics_manager_local import StatisticsManager
 from leaderboard.utils.route_indexer import RouteIndexer
 
+# NOTE: record times
+import time
+import logging
+import os
+SAVE_PATH = os.environ.get('SAVE_PATH') # to run step
+
 
 sensors_to_icons = {
     'sensor.camera.rgb':        'carla_camera',
@@ -90,9 +96,9 @@ class LeaderboardEvaluator(object):
                 raise ImportError("CARLA version 0.9.10.1 or newer required. CARLA version found: {}".format(dist))
 
         # Load agent
-        module_name = os.path.basename(args.agent).split('.')[0]
+        module_name = os.path.basename(args.agent).split('.')[0] # i.e. Agent
         sys.path.insert(0, os.path.dirname(args.agent))
-        self.module_agent = importlib.import_module(module_name)
+        self.module_agent = importlib.import_module(module_name) 
 
         # Create the ScenarioManager
         self.manager = ScenarioManager(args.timeout, args.debug > 1)
@@ -254,6 +260,8 @@ class LeaderboardEvaluator(object):
         entry_status = "Started"
 
         print("\n\033[1m========= Preparing {} (repetition {}) =========".format(config.name, config.repetition_index))
+        ## NOTE: added saved file name
+        print("> Save path: {}".format(SAVE_PATH))
         print("> Setting up the agent\033[0m")
 
         # Prepare the statistics of the route
@@ -394,7 +402,23 @@ class LeaderboardEvaluator(object):
         """
         Run the challenge mode
         """
+        # Start time
+        time_start = time.time()
         route_indexer = RouteIndexer(args.routes, args.scenarios, args.repetitions)
+        
+        # NOTE: logging time        
+        # Configure logging to write to a file, with the desired log level
+        logging.basicConfig(filename=os.environ['SAVE_PATH']+'.txt',
+                level=logging.INFO,
+                format='%(asctime)s:%(levelname)s:%(message)s',
+                datefmt='%Y-%m-%d,%H:%M:%S'
+            )
+        dt = time.time() - time_start
+        dh = dt//3600
+        dm = (dt%3600)//60
+        ds = int(dt%60)
+        first_scenario = list(route_indexer._configs_dict.keys())[0] # check: /media/haoming/970EVO/Pharuj/git/transfuser/leaderboard/leaderboard/utils/route_indexer.py
+        logging.info('\t index-{}, scenario-{}, duration- {}:{}:{}'.format(route_indexer._index-1, first_scenario, dh, dm, ds))
 
         if args.resume:
             route_indexer.resume(args.checkpoint)
@@ -404,13 +428,25 @@ class LeaderboardEvaluator(object):
             route_indexer.save_state(args.checkpoint)
 
         while route_indexer.peek():
+            
             # setup
             config = route_indexer.next()
+            
+            # NOTE:
+            dt = time.time() - time_start
+            dh = dt//3600
+            dm = (dt%3600)//60
+            ds = int(dt%60)
+            logging.info('\t index-{}, scenario-{}, duration- {}:{}:{}'.format(route_indexer._index, config.name, dh, dm, ds))
 
             # run
             self._load_and_run_scenario(args, config)
 
             route_indexer.save_state(args.checkpoint)
+            
+            # NOTE: add save global statistics every scenario
+            global_stats_record = self.statistics_manager.compute_global_statistics(route_indexer.total, total=False) # use len(current) instead of toal
+            StatisticsManager.save_global_record(global_stats_record, self.sensor_icons, route_indexer.total, args.checkpoint)
 
         # save global statistics
         print("\033[1m> Registering the global statistics\033[0m")
@@ -430,7 +466,7 @@ def main():
                         help='Port to use for the TrafficManager (default: 8000)')
     parser.add_argument('--trafficManagerSeed', default='0',
                         help='Seed used by the TrafficManager (default: 0)')
-    parser.add_argument('--debug', type=int, help='Run with debug output', default=0)
+    parser.add_argument('--debug', type=int, help='Run with debug output', default=1)
     parser.add_argument('--record', type=str, default='',
                         help='Use CARLA recording feature to create a recording of the scenario')
     parser.add_argument('--timeout', default="60.0",

@@ -183,7 +183,7 @@ class AutoPilot(autonomous_agent_local.AutonomousAgent):
     def tick(self, input_data):
         gps = input_data['gps'][1][:2]
         speed = input_data['speed'][1]['speed']
-        compass = input_data['imu'][1][-1]
+        compass = input_data['imu'][1][-1]        
         if (math.isnan(compass) == True): # simulation bug
             compass = 0.0
 

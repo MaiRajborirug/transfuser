@@ -1,5 +1,5 @@
-export CARLA_ROOT=${1:-/home/kchitta/Documents/CARLA_0.9.10.1}
-export WORK_DIR=${2:-/home/kchitta/Documents/transfuser}
+export CARLA_ROOT=${1:-~/perception_based_control_alt/carla}
+export WORK_DIR=${2:-/media/haoming/970EVO/Pharuj/git/transfuser}
 
 export CARLA_SERVER=${CARLA_ROOT}/CarlaUE4.sh
 export PYTHONPATH=$PYTHONPATH:${CARLA_ROOT}/PythonAPI
@@ -9,13 +9,19 @@ export SCENARIO_RUNNER_ROOT=${WORK_DIR}/scenario_runner
 export LEADERBOARD_ROOT=${WORK_DIR}/leaderboard
 export PYTHONPATH="${CARLA_ROOT}/PythonAPI/carla/":"${SCENARIO_RUNNER_ROOT}":"${LEADERBOARD_ROOT}":${PYTHONPATH}
 
-export SCENARIOS=${WORK_DIR}/leaderboard/data/training/scenarios/Scenario10/Town10HD_Scenario10.json
-export ROUTES=${WORK_DIR}/leaderboard/data/training/routes/Scenario10/Town10HD_Scenario10.xml
-export REPETITIONS=1
+# done TS = (7,10)
+export Town=Town10HD
+export Scenario=Scenario1
+
+export SCENARIOS=${WORK_DIR}/leaderboard/data/training/scenarios/${Scenario}/${Town}_${Scenario}.json
+export ROUTES=${WORK_DIR}/leaderboard/data/training/routes/${Scenario}/${Town}_${Scenario}.xml
+export CHECKPOINT_ENDPOINT=/media/haoming/970EVO/Pharuj/transfuser_datagen/${Town}_${Scenario}.json  
+export SAVE_PATH=/media/haoming/970EVO/Pharuj/transfuser_datagen/${Town}_${Scenario}
+
+
+export TEAM_AGENT=${WORK_DIR}/team_code_autopilot/data_agent_copy.py
 export CHALLENGE_TRACK_CODENAME=MAP
-export CHECKPOINT_ENDPOINT=${WORK_DIR}/results/Town10HD_Scenario10.json
-export SAVE_PATH=${WORK_DIR}/results/Town10HD_Scenario10
-export TEAM_AGENT=${WORK_DIR}/team_code_autopilot/data_agent.py
+export REPETITIONS=1
 export DEBUG_CHALLENGE=0
 export RESUME=1
 export DATAGEN=1

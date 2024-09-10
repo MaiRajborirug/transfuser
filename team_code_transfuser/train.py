@@ -29,16 +29,16 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--id', type=str, default='transfuser', help='Unique experiment identifier.')
-    parser.add_argument('--epochs', type=int, default=41, help='Number of train epochs.')
-    parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate.')
-    parser.add_argument('--batch_size', type=int, default=12, help='Batch size for one GPU. When training with multiple GPUs the effective batch size will be batch_size*num_gpus')
-    parser.add_argument('--logdir', type=str, default='log', help='Directory to log data to.')
+    parser.add_argument('--epochs', type=int, default=32, help='Number of train epochs.')
+    parser.add_argument('--lr', type=float, default=2.5e-5, help='Learning rate.')
+    parser.add_argument('--batch_size', type=int, default=24, help='Batch size for one GPU. When training with multiple GPUs the effective batch size will be batch_size*num_gpus')
+    parser.add_argument('--logdir', type=str, default='/home/haoming/git/transfuser/training/log_train_nov', help='Directory to log data to.')
     parser.add_argument('--load_file', type=str, default=None, help='ckpt to load.')
     parser.add_argument('--start_epoch', type=int, default=0, help='Epoch to start with. Useful when continuing trainings via load_file.')
     parser.add_argument('--setting', type=str, default='all', help='What training setting to use. Options: '
                                                                    'all: Train on all towns no validation data. '
                                                                    '02_05_withheld: Do not train on Town 02 and Town 05. Use the data as validation data.')
-    parser.add_argument('--root_dir', type=str, default=r'/mnt/qb/geiger/kchitta31/datasets/carla/pami_v1_dataset_23_11', help='Root directory of your training data')
+    parser.add_argument('--root_dir', type=str, default='/media/haoming/970EVO/Pharuj/transfuser_data', help='Root directory of your training data')
     parser.add_argument('--schedule', type=int, default=1,
                         help='Whether to train with a learning rate schedule. 1 = True')
     parser.add_argument('--schedule_reduce_epoch_01', type=int, default=30,
@@ -60,7 +60,7 @@ def main():
                         help='Valid values are 0, 1. 1 = using target point in the LiDAR0; 0 = dont do it')
     parser.add_argument('--use_point_pillars', type=int, default=0,
                         help='Whether to use the point_pillar lidar encoder instead of voxelization. 0:False, 1:True')
-    parser.add_argument('--parallel_training', type=int, default=1,
+    parser.add_argument('--parallel_training', type=int, default=0,
                         help='If this is true/1 you need to launch the train.py script with CUDA_VISIBLE_DEVICES=0,1 torchrun --nnodes=1 --nproc_per_node=2 --max_restarts=0 --rdzv_id=123456780 --rdzv_backend=c10d train.py '
                              ' the code will be parallelized across GPUs. If set to false/0, you launch the script with python train.py and only 1 GPU will be used.')
     parser.add_argument('--val_every', type=int, default=5, help='At which epoch frequency to validate.')
@@ -68,7 +68,7 @@ def main():
     parser.add_argument('--sync_batch_norm', type=int, default=0, help='0: Compute batch norm for each GPU independently, 1: Synchronize Batch norms accross GPUs. Only use with --parallel_training 1')
     parser.add_argument('--zero_redundancy_optimizer', type=int, default=0, help='0: Normal AdamW Optimizer, 1: Use Zero Reduncdancy Optimizer to reduce memory footprint. Only use with --parallel_training 1')
     parser.add_argument('--use_disk_cache', type=int, default=0, help='0: Do not cache the dataset 1: Cache the dataset on the disk pointed to by the SCRATCH enironment variable. Useful if the dataset is stored on slow HDDs and can be temporarily stored on faster SSD storage.')
-
+    parser.add_argument('--arg_file', type=str, default='/home/haoming/git/transfuser/model_ckpt/models_2022/args_transfuser_from0.txt', help='Path to a txt file containing the arguments. The arguments in the file will overwrite the arguments passed via the command line.')
 
     args = parser.parse_args()
     args.logdir = os.path.join(args.logdir, args.id)
@@ -124,7 +124,40 @@ def main():
         index_bev = config.detailed_losses.index("loss_bev")
         config.detailed_losses_weights[index_bev] = 0.0
 
+    # NOTE added overwrite with arg.txt
+    args_file = open(args.arg_file, 'r')
+    args_ = json.load(args_file)
+    args_file.close()
+
+    if ('sync_batch_norm' in args_):
+        config.sync_batch_norm = bool(args_['sync_batch_norm'])
+    if ('use_point_pillars' in args_):
+        config.use_point_pillars = args_['use_point_pillars']
+    if ('n_layer' in args_):
+        config.n_layer = args_['n_layer']
+    if ('use_target_point_image' in args_):
+        config.use_target_point_image = bool(args_['use_target_point_image'])
+    if ('use_velocity' in args_):
+        use_velocity = bool(args_['use_velocity'])
+    else:
+        use_velocity = True
+    if ('image_architecture' in args_):
+        image_architecture = args_['image_architecture']
+    else:
+        image_architecture = 'resnet34'
+
+    if ('lidar_architecture' in args_):
+        lidar_architecture = args_['lidar_architecture']
+    else:
+        lidar_architecture = 'resnet18'
+
+    if ('backbone' in args_):
+        backbone = args_['backbone']  # Options 'geometric_fusion', 'transFuser', 'late_fusion', 'latentTF'
+    else:
+        backbone = 'transFuser'  # Options 'geometric_fusion', 'transFuser', 'late_fusion', 'latentTF'
+
     # Create model and optimizers
+    # model = LidarCenterNet(config, device, backbone, image_architecture, lidar_architecture, use_velocity)
     model = LidarCenterNet(config, device, args.backbone, args.image_architecture, args.lidar_architecture, bool(args.use_velocity))
 
     if (parallel == True):
@@ -141,10 +174,10 @@ def main():
     else:
         optimizer = optim.AdamW(model.parameters(), lr=args.lr) # For single GPU training
 
-
-    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
-    params = sum([np.prod(p.size()) for p in model_parameters])
-    print ('Total trainable parameters: ', params)
+    # # NOTE: added to check trainable parameter
+    # model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    # params = sum([np.prod(p.size()) for p in model_parameters])
+    # print ('Total trainable parameters: ', params)
 
     # Data
     train_set = CARLA_Data(root=config.train_data, config=config, shared_dict=shared_dict)
@@ -301,7 +334,12 @@ class Engine(object):
         self.cur_epoch += 1
 
         # Train loop
+        # count = 0
         for data in tqdm(self.dataloader_train):
+            # count += 1
+            # if count > 30:
+            #     break
+
             self.optimizer.zero_grad(set_to_none=True)
             losses = self.load_data_compute_loss(data)
             loss = torch.tensor(0.0).to(self.device, dtype=torch.float32)
@@ -327,7 +365,11 @@ class Engine(object):
         detailed_val_losses_epoch  = {key: 0.0 for key in self.detailed_losses}
 
         # Evaluation loop loop
+        # count = 0
         for data in tqdm(self.dataloader_val):
+            # count += 1
+            # if count > 30:
+            #     break
             losses = self.load_data_compute_loss(data)
 
             loss = torch.tensor(0.0).to(self.device, dtype=torch.float32)
