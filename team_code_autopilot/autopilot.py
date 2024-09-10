@@ -723,8 +723,8 @@ class AutoPilot(autonomous_agent_local.AutonomousAgent):
                 color = carla.Color(0, color_value, 0, alpha)
                 color2 = carla.Color(0, color_value, color_value, alpha)
 
-                i_stuck = i
                 for id, traffic_participant in nearby_vehicles.items():
+                    i_stuck = i
                     if self.render_bev==False and self.junction==False and i > number_of_future_frames_no_junction:
                             break
                     if id in tmp_stucked_vehicle_id:
