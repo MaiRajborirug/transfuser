@@ -1,45 +1,11 @@
 """
 Credit: Tianwei Yin
 Copied from LAV repo
-Update: Pharuj - add custom scatter_mean and scatter_max -> avoid using torch_scatter
 """
 
-# from torch_scatter import scatter_mean, scatter_max
+from torch_scatter import scatter_mean, scatter_max
 from torch import nn
 import torch
-
-def scatter_mean(src, index, dim=0):
-    """
-    Mimics torch_scatter.scatter_mean behavior.
-    :param src: The source tensor.
-    :param index: The indices of elements to scatter.
-    :param dim: The dimension along which to index.
-    :return: The mean of scattered elements.
-    """
-    index = index.unsqueeze(-1).expand_as(src)  # Make index compatible with src size
-    sum_result = torch.zeros_like(src).scatter_add_(dim, index, src)
-    
-    # Count elements per index and avoid division by zero
-    count = torch.zeros_like(src).scatter_add_(dim, index, torch.ones_like(src))
-    count = torch.clamp(count, min=1)  # Avoid dividing by zero
-    
-    mean_result = sum_result / count
-    return mean_result
-
-def scatter_max(src, index, dim=0):
-    """
-    Mimics torch_scatter.scatter_max behavior.
-    :param src: The source tensor.
-    :param index: The indices of elements to scatter.
-    :param dim: The dimension along which to index.
-    :return: The max of scattered elements.
-    """
-    expanded_index = index.unsqueeze(-1).expand_as(src)  # Expand index to match src
-    output = torch.full_like(src, float('-inf'))  # Initialize with minimum values
-    output = output.scatter_(dim, expanded_index, src)
-    
-    max_result, _ = torch.max(output, dim)
-    return max_result
 
 
 class DynamicPointNet(nn.Module):

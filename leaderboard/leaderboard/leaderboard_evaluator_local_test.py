@@ -100,12 +100,12 @@ class LeaderboardEvaluator(object):
         sys.path.insert(0, os.path.dirname(args.agent)) # ./team_code_transfuser
         
         print('up to here work')
-        breakpoint()
+        # breakpoint()
         self.module_agent = importlib.import_module(module_name) # --> leads to segmentation fault error
         # Create the ScenarioManager
-        breakpoint()
+        # breakpoint()
         self.manager = ScenarioManager(args.timeout, args.debug > 1)
-
+        # breakpoint()
         # Time control for summary purposes
         self._start_time = GameTime.get_time()
         self._end_time = None

@@ -1,4 +1,4 @@
-name: tfuse
+name: tfuse-pr1
 channels:
   - defaults
 dependencies:

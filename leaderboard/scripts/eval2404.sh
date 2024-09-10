@@ -13,8 +13,8 @@ export PYTHONPATH="${CARLA_ROOT}/PythonAPI/carla/":"${SCENARIO_RUNNER_ROOT}":"${
 
 export SCENARIOS=${WORK_DIR}/leaderboard/data/longest6/eval_scenarios.json
 export REPETITIONS=1
-export CHALLENGE_TRACK_CODENAME=MAP
-export ROUTES=/media/haoming/970EVO/Pharuj/git/transfuser/leaderboard/data/longest6/longest6_crashes.xml
+export CHALLENGE_TRACK_CODENAME=SENSORS # SENSORS
+export ROUTES=/media/haoming/970EVO/Pharuj/git/transfuser/leaderboard/data/longest6/longest6_crashes2.xml
 
 export TEAM_AGENT=${WORK_DIR}/team_code_transfuser/submission_agent.py # tf_2404_noise.py
 
@@ -27,10 +27,10 @@ export TM_PORT=2500
 
 # Loop for changing noise
 # for NOISE in $(seq 0.0 0.1 1.0) # increment by 0.1 to 1.0
-for NOISE in $(seq 0.0 0.1 0.1) # increment by 0.1 to 1.0
+for NOISE in $(seq 0.0 0.1 0.0) # increment by 0.1 to 1.0
 do
     export NOISE
-    export SAVE_PATH="/media/haoming/970EVO/Pharuj/cdc_eval/240909_tf_noise${NOISE}_rep${REPETITIONS}_0"
+    export SAVE_PATH="/media/haoming/970EVO/Pharuj/cdc_eval/240910_tf_noise${NOISE}_rep${REPETITIONS}_0"
     export CHECKPOINT_ENDPOINT="${SAVE_PATH}.json"
     
     # Run the simulation with the current noise setting
