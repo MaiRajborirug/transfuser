@@ -36,7 +36,7 @@ export TM_PORT=2500
 for NOISE in $(seq 0.0 0.1 0.0) # increment by 0.1 to 1.0
 do
     export NOISE
-    export SAVE_PATH="/media/haoming/970EVO/Pharuj/cdc_eval/240912_tfcbf_noise${NOISE}_rep${REPETITIONS}_2"
+    export SAVE_PATH="/media/haoming/970EVO/Pharuj/cdc_eval/240912_tfcbf_noise${NOISE}_rep${REPETITIONS}_5"
     export CHECKPOINT_ENDPOINT="${SAVE_PATH}.json"
     
     # Run the simulation with the current noise setting

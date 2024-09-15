@@ -282,8 +282,8 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         
         # save lidar into folder
         np.save(os.path.join(SAVE_PATH, 'lidar_'+str(self.step)+'.npy'), input_data['lidar'][1])
-        print('shape:', lidar_temp.shape)
-        print(lidar_temp[:5,:])
+        # print('shape:', lidar_temp.shape)
+        print(self.step)
         
         temp1 = lidar_temp[0, 0]
         N, _ = lidar_temp.shape
