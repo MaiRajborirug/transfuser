@@ -121,24 +121,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         self.rgb_back = None #For debugging
         
         #---discreteCBF----
-        self.scatter = None
-        self.lidar_data_prev = np.array([[100,100,100]]) # random far pointcloud
-        fig = plt.figure()
-        self.ax = fig.add_subplot(111, projection='3d')
-        
-        # initiate CBF parameter
-        self.v_i = 5 # m/s
-        self.R_i = 5 # m
-        self.gamma = 0.03
-        self.delta_time = 0.05 # CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
-        self.h_lower = 0.3
-        self.h_upper = 0.5
-
-        # now use random fixed ego states and control
-        self.v_e = 20
-        self.a_e = 4
-        self.R_e = 4
-        # self.dcbf = discreteCBF(h_upper=0.5, h_lower=0.3 ,v_i=5, R_i=20, gamma=0.03)
+        self.dcbf = discreteCBF(h_upper=0.5, h_lower=0.3 ,v_i=5, R_i=20, gamma=0.03)
 
     def _init(self):
         self._route_planner = RoutePlanner(self.config.route_planner_min_distance, self.config.route_planner_max_distance)
@@ -280,105 +263,6 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         result['target_point'] = tuple(local_command_point)
 
         return result
-    
-    # ---discrete CBF---
-    def _h(self, X, Y):
-        """return the barrier function output of h(t)"""
-        return np.sqrt(X**2 + Y**2) - self.R_i
-    
-    def _h_t1(self, X, y):
-        """return the barrier function output of h(t+1)
-        consider the ego head in y+ front direction and steer in +x left
-        """
-        arc = (self.v_e + 1/2 * self.a_e * self.delta_time)* self.delta_time
-        angle = arc/self.R_e
-        dy = - np.sin(angle) * self.R_e - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
-        
-        
-        dx = (1-np.cos(angle)) * R_e * self.contol.steer - (v_i * dt * X / np.sqrt(X**2 + Y**2))
-        dtheta = arc/angle
-        return np.sqrt((X+dx)**2 + (Y+dy)**2) - R_i
-
-    # Function to update the plot for each frame (real-time data)
-    def _update_lidar_plot(self, input_data):
-        self.ax.cla()  # Clear the previous plot
-    
-        lidar_data = input_data['lidar'][1][:, :3]
-        
-        # merge with current lidar data
-        lidar_data = np.vstack((self.lidar_data_prev, lidar_data))
-        
-        # update self.lidar_data_prev
-        self.lidar_data_prev = input_data['lidar'][1][:, :3]
-        
-        #---------
-        # Preprocess the point cloud
-        # 1: limit the height
-        lidar_data = lidar_data[(lidar_data[:, 2] > self.h_lower -2.5) & (lidar_data[:, 2] < self.h_upper-2.5)]
-        
-        # 2: Statistical Outlier Removal (SOR):
-            # convert to Open3D point cloud format
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(lidar_data[:,:3])
-            # Apply statistical outlier removal ~ k = n/100
-        pcd_SOR, ind = pcd.remove_statistical_outlier(nb_neighbors=10, std_ratio=0.5)
-        #     Convert back to numpy array (filtered X, Y, Z)
-        # xyz_SOR = np.asarray(pcd_SOR.points)
-        #     # Retain intensity from the original point cloud for the filtered points
-        # intensity_SOR = lidar_data[ind, 3]
-        # pointcloud_SOR = np.hstack((xyz_SOR, intensity_SOR.reshape(-1, 1)))
-        
-        # 3: voxel Grid Down Sampling
-        voxel_size = 0.2
-        pcd_downsampled = pcd_SOR.voxel_down_sample(voxel_size)
-        
-            # Convert back to numpy array (downsampled X, Y, Z)
-        xyz_downsampled = np.asarray(pcd_downsampled.points)
-
-        #     # Downsample intensity: choose the nearest point intensity or take the average
-        #     # For simplicity, here we will take the average intensity for each voxel
-        # intensity_downsampled = []
-        # for point in xyz_downsampled:
-        #     # Find the points in the original point cloud that fall into this voxel
-        #     distances = np.linalg.norm(lidar_data[:, :3] - point, axis=1)
-        #     mask = distances < voxel_size
-        #     if np.any(mask):
-        #         breakpoint()
-        #         intensity_downsampled.append(np.mean(lidar_data[mask, 3]))
-        #     else:
-        #         intensity_downsampled.append(0)  # Handle cases with no intensity (optional)
-
-        lidar_data = np.array(xyz_downsampled)
-        print(f"num pointcloud: pre1frame={len(self.lidar_data_prev)}, step={self.step}, post2frame={len(lidar_data)}")
-        # ---------
-
-        # Extract X, Y, Z from the point cloud
-        X = lidar_data[:, 0]
-        Y = lidar_data[:, 1]
-        Z = lidar_data[:, 2]
-
-        # Create the scatter plot
-        self.scatter = self.ax.scatter(X, Y, Z, c=Z, cmap='viridis', alpha=0.8, s=0.05)
-
-        # Set plot labels
-        self.ax.set_xlabel('X')
-        self.ax.set_ylabel('Y')
-        self.ax.set_zlabel('Z')
-
-        # Set the axis limits
-        self.ax.set_xlim([-50, 50])  # X-axis range
-        self.ax.set_ylim([-50, 50])  # Y-axis range
-        self.ax.set_zlim([-25, 30])  # Z-axis range
-
-        # Set the view angle for top-down view
-        self.ax.view_init(elev=-90, azim=0)
-
-        # Draw the updated plot
-        plt.draw()
-        plt.pause(0.01)  # Small pause to allow the plot to update
-        
-        # # pass post-processing lidar_data
-        # self.lidar_data = lidar_data
 
     @torch.inference_mode() # Faster version of torch_no_grad
     def run_step(self, input_data, timestamp):
@@ -414,9 +298,9 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         
         tick_data = self.tick(input_data)
         
-        # #--vis lidar purpose--
-        self._update_lidar_plot(input_data)
-        # #----
+        #--discrete CBF--
+        self.dcbf._update_lidar_plot(input_data, self.step)
+        #------
         
 
         # repeat actions twice to ensure LiDAR data availability # this part make us skip lidar
@@ -874,3 +758,121 @@ class EgoModel():
         next_spds = np.array(next_spds)
 
         return next_locs, next_yaws, next_spds
+
+class discreteCBF():
+    def __init__(self, v_i=5, R_i=5, gamma=0.03, h_lower=0.3, h_upper=0.5):
+        self.scatter = None
+        self.lidar_data_prev = np.array([[100,100,100]]) # random far pointcloud
+        fig = plt.figure()
+        self.ax = fig.add_subplot(111, projection='3d')
+        
+        # initiate CBF parameter
+        self.v_i = v_i # m/s
+        self.R_i = R_i # m
+        self.gamma = gamma
+        self.delta_time = 0.05 # CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
+        self.h_lower = h_lower
+        self.h_upper = h_upper
+
+        # now use random fixed ego states and control
+        self.v_e = 20
+        self.a_e = 4
+        self.R_e = 4
+        
+    # ---discrete CBF---
+    def _h(self, X, Y):
+        """return the barrier function output of h(t)"""
+        return np.sqrt(X**2 + Y**2) - self.R_i
+    
+    def _h_t1(self, X, Y, steering):
+        """return the barrier function output of h(t+1)
+        consider the ego head in y+ front direction and steer in +x left
+        """
+        arc = (self.v_e + 1/2 * self.a_e * self.delta_time)* self.delta_time
+        angle = arc/self.R_e
+        dy = - np.sin(angle) * self.R_e - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
+        
+        dx = (1-np.cos(angle)) * self.R_e * steering - (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
+        # dtheta = arc/angle
+        return np.sqrt((X+dx)**2 + (Y+dy)**2) - self.R_i
+
+    # Function to update the plot for each frame (real-time data)
+    def _update_lidar_plot(self, input_data, step):
+        self.ax.cla()  # Clear the previous plot
+    
+        lidar_data = input_data['lidar'][1][:, :3]
+        
+        # merge with current lidar data
+        lidar_data = np.vstack((self.lidar_data_prev, lidar_data))
+        
+        # update self.lidar_data_prev
+        self.lidar_data_prev = input_data['lidar'][1][:, :3]
+        
+        #---------
+        # Preprocess the point cloud
+        # 1: limit the height
+        lidar_data = lidar_data[(lidar_data[:, 2] > self.h_lower -2.5) & (lidar_data[:, 2] < self.h_upper-2.5)]
+        
+        # 2: Statistical Outlier Removal (SOR):
+            # convert to Open3D point cloud format
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(lidar_data[:,:3])
+            # Apply statistical outlier removal ~ k = n/100
+        pcd_SOR, ind = pcd.remove_statistical_outlier(nb_neighbors=10, std_ratio=0.5)
+        #     Convert back to numpy array (filtered X, Y, Z)
+        # xyz_SOR = np.asarray(pcd_SOR.points)
+        #     # Retain intensity from the original point cloud for the filtered points
+        # intensity_SOR = lidar_data[ind, 3]
+        # pointcloud_SOR = np.hstack((xyz_SOR, intensity_SOR.reshape(-1, 1)))
+        
+        # 3: voxel Grid Down Sampling
+        voxel_size = 0.2
+        pcd_downsampled = pcd_SOR.voxel_down_sample(voxel_size)
+        
+            # Convert back to numpy array (downsampled X, Y, Z)
+        xyz_downsampled = np.asarray(pcd_downsampled.points)
+
+        #     # Downsample intensity: choose the nearest point intensity or take the average
+        #     # For simplicity, here we will take the average intensity for each voxel
+        # intensity_downsampled = []
+        # for point in xyz_downsampled:
+        #     # Find the points in the original point cloud that fall into this voxel
+        #     distances = np.linalg.norm(lidar_data[:, :3] - point, axis=1)
+        #     mask = distances < voxel_size
+        #     if np.any(mask):
+        #         breakpoint()
+        #         intensity_downsampled.append(np.mean(lidar_data[mask, 3]))
+        #     else:
+        #         intensity_downsampled.append(0)  # Handle cases with no intensity (optional)
+
+        lidar_data = np.array(xyz_downsampled)
+        print(f"num pointcloud: pre1frame={len(self.lidar_data_prev)}, step={step}, post2frame={len(lidar_data)}")
+        # ---------
+
+        # Extract X, Y, Z from the point cloud
+        X = lidar_data[:, 0]
+        Y = lidar_data[:, 1]
+        Z = lidar_data[:, 2]
+
+        # Create the scatter plot
+        self.scatter = self.ax.scatter(X, Y, Z, c=Z, cmap='viridis', alpha=0.8, s=0.05)
+
+        # Set plot labels
+        self.ax.set_xlabel('X')
+        self.ax.set_ylabel('Y')
+        self.ax.set_zlabel('Z')
+
+        # Set the axis limits
+        self.ax.set_xlim([-50, 50])  # X-axis range
+        self.ax.set_ylim([-50, 50])  # Y-axis range
+        self.ax.set_zlim([-25, 30])  # Z-axis range
+
+        # Set the view angle for top-down view
+        self.ax.view_init(elev=-90, azim=0)
+
+        # Draw the updated plot
+        plt.draw()
+        plt.pause(0.01)  # Small pause to allow the plot to update
+        
+        # # pass post-processing lidar_data
+        # self.lidar_data = lidar_data
