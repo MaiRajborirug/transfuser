@@ -61,9 +61,9 @@ def update(frame):
     ax.view_init(elev=90, azim=0)
 
 # Load the point clouds from both files
-route7 = '/media/haoming/970EVO/Pharuj/cdc_eval/240912_tfcbf_noise0.0_rep1_4' # num_frame=363
-route13 = '/media/haoming/970EVO/Pharuj/cdc_eval/240912_tfcbf_noise0.0_rep1_5' # num_frame=312
-route29 = '/media/haoming/970EVO/Pharuj/cdc_eval/240912_tfcbf_noise0.0_rep1_1' # num_frame=1206
+route7 = '/media/haoming/970EVO/pharuj/cdc_eval/240912_tfcbf_noise0.0_rep1_4' # num_frame=363
+route13 = '/media/haoming/970EVO/pharuj/cdc_eval/240912_tfcbf_noise0.0_rep1_5' # num_frame=312
+route29 = '/media/haoming/970EVO/pharuj/cdc_eval/240912_tfcbf_noise0.0_rep1_1' # num_frame=1206
 
 choosing_route = route13
 

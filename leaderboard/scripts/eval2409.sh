@@ -1,9 +1,4 @@
-# /media/haoming/970EVO/carla$ ./CarlaUE4.sh --world-port=2000 -opengl
-# conda activate tfuse-pr1
-# /media/haoming/970EVO/pharuj/git/transfuser/leaderboard/scripts$ ./eval2404.sh /media/haoming/970EVO/carla /media/haoming/970EVO/pharuj/git/transfuser
-
-
-
+#!/bin/bash
 
 # Initial setup
 export CARLA_ROOT=${1:-/media/haoming/970EVO/carla}
@@ -19,10 +14,10 @@ export PYTHONPATH="${CARLA_ROOT}/PythonAPI/carla/":"${SCENARIO_RUNNER_ROOT}":"${
 
 export SCENARIOS=${WORK_DIR}/leaderboard/data/longest6/eval_scenarios.json
 export REPETITIONS=1
-export CHALLENGE_TRACK_CODENAME=MAP # SENSORS , MAP
+export CHALLENGE_TRACK_CODENAME=MAP # SENSORS, MAP
 export ROUTES=/media/haoming/970EVO/pharuj/git/transfuser/leaderboard/data/longest6/longest6_crashes2.xml
 
-export TEAM_AGENT=${WORK_DIR}/team_code_transfuser/tfcbf_1509_noise.py # tf_2404_noise.py
+export TEAM_AGENT=${WORK_DIR}/team_code_transfuser/tfcbf_1509_noise.py
 
 export TEAM_CONFIG=/media/haoming/970EVO/pharuj/transfuser_training/model_ckpt/models_2023/Transfuser_newweights/TransFuserAllTownsNoZeroNoSyncZGSeed1
 export DEBUG_CHALLENGE=0
@@ -31,13 +26,48 @@ export DATAGEN=0
 export PORT=2000
 export TM_PORT=2500
 
-# Loop for changing noise
-# for NOISE in $(seq 0.0 0.1 1.0) # increment by 0.1 to 1.0
+# Process command-line arguments for -safe-path
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -safe-path) SAFE_PATH="$2"; shift ;;
+    esac
+    shift
+done
+
+# If SAFE_PATH is not provided, generate it automatically
+if [ -z "$SAFE_PATH" ]; then
+    # Get today's date
+    DATE=$(date +%Y%m%d)
+    
+    # Extract TEAM_AGENT name without directory or extension
+    TEAM_AGENT_NAME=$(basename ${TEAM_AGENT} .py)
+
+    # Extract ROUTES name without directory or extension
+    ROUTES_NAME=$(basename ${ROUTES} .xml)
+
+    # Set NOISE
+    NOISE=0.2
+
+    # Count how many times this specific configuration has been run today
+    COUNT=1
+    SAVE_FOLDER="/media/haoming/970EVO/pharuj/cdc_eval/"
+    SAVE_PATTERN="${SAVE_FOLDER}${DATE}-${TEAM_AGENT_NAME}-${NOISE}-${ROUTES_NAME}-"
+    while [ -d "${SAVE_PATTERN}${COUNT}" ]; do
+        COUNT=$((COUNT + 1))
+    done
+
+    # Construct SAVE_PATH
+    export SAVE_PATH="${SAVE_PATTERN}${COUNT}"
+else
+    export SAVE_PATH="$SAFE_PATH"
+fi
+
+echo "SAVE_PATH set to: $SAVE_PATH"
+
+# Loop for changing noise (if required, you can modify NOISE loop logic)
 for NOISE in $(seq 0.0 0.1 0.0) # increment by 0.1 to 1.0
 do
     export NOISE
-    # export SAVE_PATH="/media/haoming/970EVO/pharuj/cdc_eval/240912_tfcbf_noise${NOISE}_rep${REPETITIONS}_5"
-    export SAVE_PATH="/media/haoming/970EVO/pharuj/cdc_eval/240915_4"
     export CHECKPOINT_ENDPOINT="${SAVE_PATH}.json"
     
     # Run the simulation with the current noise setting
@@ -56,3 +86,4 @@ do
 
 done
 
+# ./eval_2404.sh -safe-path "/media/haoming/970EVO/pharuj/custom_save_path"

@@ -40,6 +40,10 @@ import time
 import logging
 import os
 SAVE_PATH = os.environ.get('SAVE_PATH') # to run step
+if SAVE_PATH is None:
+    raise ValueError("SAVE_PATH is not set. Make sure to set it in the shell script or environment.")
+    
+print(f"Results will be saved to: {SAVE_PATH}")
 
 
 sensors_to_icons = {
@@ -99,14 +103,8 @@ class LeaderboardEvaluator(object):
         module_name = os.path.basename(args.agent).split('.')[0] #
         sys.path.insert(0, os.path.dirname(args.agent)) # ./team_code_transfuser
         
-        print('up to here work')
-        # breakpoint()
         self.module_agent = importlib.import_module(module_name) # --> leads to segmentation fault error
-        # Create the ScenarioManager
-        # breakpoint()
         self.manager = ScenarioManager(args.timeout, args.debug > 1)
-        # breakpoint()
-        # Time control for summary purposes
         self._start_time = GameTime.get_time()
         self._end_time = None
 
@@ -509,6 +507,7 @@ def main():
         traceback.print_exc()
     finally:
         del leaderboard_evaluator
+        print(f"Results will be saved to: {SAVE_PATH}")
 
 
 if __name__ == '__main__':
