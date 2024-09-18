@@ -18,6 +18,7 @@ from data import lidar_to_histogram_features, draw_target_point, lidar_bev_cam_c
 from shapely.geometry import Polygon
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.animation import FuncAnimation
 import open3d as o3d
@@ -121,7 +122,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         self.rgb_back = None #For debugging
         
         #---discreteCBF----
-        self.dcbf = discreteCBF(h_upper=0.5, h_lower=0.3 ,v_i=5, R_i=20, gamma=0.03)
+        self.dcbf = discreteCBF(h_upper=0.5, h_lower=0.3 ,v_i=5, R_i=2, gamma=0.03)
 
     def _init(self):
         self._route_planner = RoutePlanner(self.config.route_planner_min_distance, self.config.route_planner_max_distance)
@@ -298,12 +299,14 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         
         tick_data = self.tick(input_data)
         
-        #--discrete CBF-----
+        ##--discrete CBF-----
         lidar_data = self.dcbf._preprocess_lidar(input_data, self.step)
-        mask_satisfy = ((self.dcbf._h_t1(lidar_data, self.control.steer) - (1-self.dcbf.gamma)*self.dcbf._h(lidar_data))>0) | (lidar_data[:,1]<0)
+        # get 
+        
+        mask_satisfy = ((self.dcbf._h_t1(lidar_data, self.control.steer) - (1 -self.dcbf.gamma)*self.dcbf._h(lidar_data))>0) | (lidar_data[:,1]<0)
         mask_not_satisfy = mask_satisfy ==0
-        self.dcbf._update_lidar_plot(lidar_data)
-        #----------
+        self.dcbf._update_lidar_plot(lidar_data, mask_satisfy, mask_not_satisfy)
+        ##----------
         
 
         # repeat actions twice to ensure LiDAR data availability # this part make us skip lidar
@@ -763,7 +766,7 @@ class EgoModel():
         return next_locs, next_yaws, next_spds
 
 class discreteCBF():
-    def __init__(self, v_i=5, R_i=5, gamma=0.03, h_lower=0.3, h_upper=0.5):
+    def __init__(self, v_i=5, R_i=20, gamma=0.03, h_lower=0.3, h_upper=0.5):
         self.scatter = None
         self.lidar_data_prev = np.array([[100,100,100]]) # random far pointcloud
         fig = plt.figure()
@@ -778,9 +781,9 @@ class discreteCBF():
         self.h_upper = h_upper
 
         # now use random fixed ego states and control
-        self.v_e = 20
+        self.v_e = 5
         self.a_e = 4
-        self.R_e = 4
+        self.R_e = 2
         
     # ---discrete CBF---
     def _h(self, lidar_data):
@@ -791,14 +794,13 @@ class discreteCBF():
     
     def _h_t1(self, lidar_data, steering): # v_e, a_e, R_e
         """return the barrier function output of h(t+1)
-        consider the ego head in y+ front direction and steer in +x left
+        consider the ego head in y+ front direction and steer in +x right
         """
         X = lidar_data[:, 0]
         Y = lidar_data[:, 1]        
         arc = (self.v_e + 1/2 * self.a_e * self.delta_time)* self.delta_time
         angle = arc/self.R_e
         dy = - np.sin(angle) * self.R_e - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
-        
         dx = (1-np.cos(angle)) * self.R_e * steering - (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
         # dtheta = arc/angle
         return np.sqrt((X+dx)**2 + (Y+dy)**2) - self.R_i
@@ -850,13 +852,13 @@ class discreteCBF():
         #         intensity_downsampled.append(0)  # Handle cases with no intensity (optional)
 
         lidar_data = np.array(xyz_downsampled)
-        lidar_data[:, 1] *= -1  # invert x-axis
+        lidar_data[:, 0] *= -1  # invert x-axis left right
         print(f"num pointcloud: pre1frame={len(self.lidar_data_prev)}, step={step}, post2frame={len(lidar_data)}")
         
         return lidar_data
 
     # Function to update the plot for each frame (real-time data)
-    def _update_lidar_plot(self, lidar_data):
+    def _update_lidar_plot(self, lidar_data, mask_satisfy, mask_not_satisfy):
         self.ax.cla()  # Clear the previous plot
 
         # Extract X, Y, Z from the point cloud
@@ -865,7 +867,16 @@ class discreteCBF():
         Z = lidar_data[:, 2]
 
         # Create the scatter plot
-        self.scatter = self.ax.scatter(X, Y, Z, c=Z, cmap='viridis', alpha=0.8, s=0.05)
+        # self.scatter = self.ax.scatter(X, Y, Z, c=Z, cmap='viridis', alpha=0.8, s=0.05)
+        # theta = np.linspace(0, 2*np.pi, 100)
+        # x = self.R_i * np.cos(theta)
+        # y = self.R_i * np.sin(theta)
+        # x_mesh, y_mesh = np.meshgrid(x, y)
+        # z_mesh = np.zeros_like(x_mesh)  # adjust this if you want the circle to be at a different height
+        # self.ax.plot_surface(x_mesh, y_mesh, z_mesh, color='blue', linewidth=2, linestyle='dashed', alpha=0.5)
+        scatter_satisfy = self.ax.scatter(X[mask_satisfy], Y[mask_satisfy], Z[mask_satisfy], c='g', label="Satisfy CBF (1)", alpha=0.8, s=1)
+        scatter_not_satisfy = self.ax.scatter(X[mask_not_satisfy], Y[mask_not_satisfy], Z[mask_not_satisfy], c='r', label="Not satisfy CBF (0)", alpha=0.8, s=3)
+        scatter_car = self.ax.scatter([0],[0],[0], c='black', label="Car face up", marker='^', s=40)
 
         # Set plot labels
         self.ax.set_xlabel('X')
@@ -878,7 +889,8 @@ class discreteCBF():
         self.ax.set_zlim([-25, 30])  # Z-axis range
 
         # Set the view angle for top-down view
-        self.ax.view_init(elev=-90, azim=0)
+        self.ax.view_init(elev=90, azim=-90)
+        self.ax.legend()
 
         # Draw the updated plot
         plt.draw()
