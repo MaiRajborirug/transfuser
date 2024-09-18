@@ -22,6 +22,7 @@ from matplotlib.patches import Circle
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.animation import FuncAnimation
 import open3d as o3d
+from scipy.optimize import minimize # optimiza function
 
 import itertools
 import pathlib
@@ -122,7 +123,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         self.rgb_back = None #For debugging
         
         #---discreteCBF----
-        self.dcbf = discreteCBF(h_upper=0.5, h_lower=0.3 ,v_i=5, R_i=2, gamma=0.03)
+        self.dcbf = discreteCBF(h_upper=0.6, h_lower=0.2 ,v_i=0.5, R_i=1.5, gamma=0.03)
 
     def _init(self):
         self._route_planner = RoutePlanner(self.config.route_planner_min_distance, self.config.route_planner_max_distance)
@@ -304,22 +305,26 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         v_e = np.maximum(0,input_data["speed"][1]["speed"]) # speedometer in vehicle direction (m/s)
         self.w_e = input_data['imu'][1][5] # angular vel in z-axis (rad/s)
         a_e = input_data["imu"][1][0] # accelaration in vehicle direction (m/s^2)
+        
         if abs(self.control.steer) > 0.05: # desensitize the value
             R_e = (self.dcbf.agent_backwhl2cm**2 + self.dcbf.agent_front2back**2*abs(1/math.tan(self.control.steer)))
         else:
             R_e = np.inf
 
         lidar_data = self.dcbf._preprocess_lidar(input_data, self.step)
-        mask_satisfy = ((self.dcbf._h_t1(lidar_data, self.control.steer, v_e, a_e, R_e) - (1 -self.dcbf.gamma)*self.dcbf._h(lidar_data))>0) | (lidar_data[:,1]<0)
+        
+        # mask_satisfy = ((self.dcbf._h_t1(lidar_data, self.control.steer, v_e, a_e) - (1 -self.dcbf.gamma)*self.dcbf._h(lidar_data))>0) | (lidar_data[:,1]<0)
+        mask_satisfy = self.dcbf._constraint(lidar_data, self.control.steer, v_e, a_e)
+
         mask_not_satisfy = mask_satisfy ==0
+        
         self.dcbf._update_lidar_plot(lidar_data, mask_satisfy, mask_not_satisfy)
         
-        # optimization:u_nominal = (a_e, R_e)
-        # u = argmin_u |u_nominal - u|^2 such that mask_satisfy(closest 10 lidar)=1
+        # pass the condition, no need to optimize
         
-        ##----------
+        # keep only close distance lidar data 
+        close_data_lidar = lidar_data[(lidar_data[:, 0]**2 + lidar_data[:, 1]**2) < self.dcbf.dist_interest**2]
         
-
         # repeat actions twice to ensure LiDAR data availability # this part make us skip lidar
         if self.step % self.config.action_repeat == 1:
             self.update_gps_buffer(self.control, tick_data['compass'], tick_data['speed'])
@@ -466,6 +471,83 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         self.update_gps_buffer(self.control, tick_data['compass'], tick_data['speed'])
         # NOTE: cv2 waitKey - to show the tfuse visualization
         # cv2.waitKey(1) # 
+        
+        # -- CBF--- self.dcbf.percentage_pass
+        if (np.mean(self.dcbf._constraint(lidar_data, self.control.steer, v_e, a_e))- self.dcbf.percentage_pass) < 0: # True = not pass CBF
+            print(f"CBF not pass: {np.mean(self.dcbf._constraint(lidar_data, self.control.steer, v_e, a_e))}")
+            # optimization:u_nominal = (a_e, R_e)
+            # Define bounds
+            a_e_bound = (-13.0, 11.0)
+            steer_bound = (-1, 1)
+
+            # ---- Objective Function ----
+            def objective(u):
+                a_e_i, steer_i = u
+                u_e = [a_e, self.control.steer]
+                return np.linalg.norm([10*(a_e_i - u_e[0]), (steer_i - u_e[1])])**2
+
+            # ---- Constraint Function ----
+            def constraint(u):
+                a_e_i, steer_i = u
+                # Check if more than 95% of the closest 100 lidar points satisfy the CBF condition
+                # return np.mean(self.dcbf._constraint(lidar_data, steer_i, v_e, a_e_i)) > 0.90
+                return np.mean(self.dcbf._constraint(lidar_data, steer_i, v_e, a_e_i)) - self.dcbf.percentage_pass
+            
+            # --- do nother if passing condition ----
+
+            # Initial guess (current control)
+            u_init = [a_e, self.control.steer]
+            # Set up the constraint
+            constraints = [{'type': 'ineq', 'fun': constraint}]
+
+            # Run the optimizer to minimize the difference
+            result = minimize(objective, u_init, bounds=[a_e_bound, steer_bound], constraints=constraints)
+
+            # # Extract optimized control values
+            a_e_opt, steer_opt = result.x
+            
+            # NOTE: map (a, phi) back to carla control (throttle, steering, break)
+            if abs(a_e_opt) < steer_opt * 3: # prioritize turning arbitary comparison
+                # print('sc case 1')
+                # throttle mapping
+                a_control = a_e # before optimize        
+                delta = np.clip(math.sqrt(v_e) * self.dcbf.c_speed_sqrt + a_control * self.dcbf.c_acc + self.w_e**2 * self.dcbf.c_w_sq + abs(self.w_e) * self.dcbf.c_w, 0.0, 0.25)
+                throttle = self.dcbf.throttle_controller.step(delta)
+                throttle = np.clip(throttle+0.15, 0.0, 0.75)
+                # throttle = np.maximum(control.throttle /2, 0.25)
+                
+                # # print('change in phi', self.delta_time * phi_control)
+                # steer = math.atan(math.sqrt(self.dcbf.agent_front2back**2 / (R * R - self.dcbf.agent_backwhl2cm**2))) * np.sign(self.w_e)
+                # steer = np.clip(steer,-1,1)
+            
+            elif a_e_opt > -2: # prioritize throttle
+                # print('sc case 2')
+                # throttle mapping           
+                delta = np.clip(math.sqrt(v_e) * self.dcbf.c_speed_sqrt + a_e_opt * self.dcbf.c_acc + self.w_e**2 * self.dcbf.c_w_sq + abs(self.w_e) * self.dcbf.c_w, 0.0, 0.25)
+                throttle = self.dcbf.throttle_controller.step(delta)
+                throttle = np.clip(throttle + 0.15, 0.0, 0.75) # 0.15
+                brake = 0
+                
+                # # steer mapping
+                # desire_w = self.w_e + self.delta_time * phi_control
+                # # print('change in phi', self.delta_time * phi_control)
+                # steer = self._calculate_steer(v_e, desire_w)
+
+            else:
+                # print('sc case 3')
+                throttle = 0
+                brake = 1
+                steer_opt = 0
+
+            # # ---- Update Control ----
+            print(f"Norminal : a{a_e:.2f}, th{self.control.throttle:.2f}, st{self.control.steer:.2f} / Optimized Control: a{a_e_opt:.2f}, th{throttle:.2f}, st{steer_opt:.2f}")
+
+            control.steer = steer
+            control.throttle = np.minimum(throttle, control.throttle)
+            # control.brake = np.maximum(brake, control.brake)
+            ##----------
+        else:
+            print(f"CBF pass / Norminal : a{a_e:.2f}, th{self.control.throttle:.2f}, st{self.control.steer:.2f}")
         
         return control
 
@@ -797,7 +879,7 @@ class PIDController(object):
         return self._K_P * error + self._K_I * integral + self._K_D * derivative
 
 class discreteCBF():
-    def __init__(self, v_i=5, R_i=20, gamma=0.03, h_lower=0.3, h_upper=0.5):
+    def __init__(self, v_i=5, R_i=20, gamma=0.03, h_lower=0.3, h_upper=0.5, dist_interest=3, percentage_pass=0.95):
         """
         v_i = object speed (assume they are all heading toward the ego vehicle)
         R_i = safeset radius
@@ -811,6 +893,9 @@ class discreteCBF():
         R_e = turning radius
         v_e = vehicle speed
         a_e = vehicle acceleration
+        
+        dist_interest = distance of interest lidar for optimization
+        percentage_pass = percent of lidar points that need to pass the CBF condition
         """
         self.scatter = None
         self.lidar_data_prev = np.array([[100,100,100]]) # random far pointcloud
@@ -834,12 +919,103 @@ class discreteCBF():
         self.gamma = gamma
         self.h_lower = h_lower
         self.h_upper = h_upper
+        self.dist_interest = 3 # m
+        self.percentage_pass = 0.95
 
         # NOTE: use when random fixed ego states and control
         self.v_e = 5
         self.a_e = 4
         self.R_e = 2
+
+    def _preprocess_lidar(self, input_data, step):
+        # Step 1: Extract lidar data
+        lidar_data = input_data['lidar'][1][:, :3]
         
+        # Step 2: Merge with the previous lidar data
+        lidar_data = np.vstack((self.lidar_data_prev, lidar_data))
+        
+        # Step 3: Update the previous lidar data
+        self.lidar_data_prev = input_data['lidar'][1][:, :3]
+        
+        # Step 4: Preprocess the point cloud
+        # 4.1: Limit the height
+        lidar_data = lidar_data[(lidar_data[:, 2] > self.h_lower - 2.5) & (lidar_data[:, 2] < self.h_upper - 2.5)]
+        
+        # Step 5: Statistical Outlier Removal (SOR)
+        # Convert to Open3D point cloud format
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(lidar_data[:, :3])
+        
+        # Apply statistical outlier removal ~ k = n/100
+        pcd_SOR, ind = pcd.remove_statistical_outlier(nb_neighbors=10, std_ratio=0.5)
+        
+        # Step 6: Voxel Grid Down Sampling
+        voxel_size = 0.2
+        pcd_downsampled = pcd_SOR.voxel_down_sample(voxel_size)
+        
+        # Convert back to numpy array (downsampled X, Y, Z)
+        lidar_data = np.asarray(pcd_downsampled.points)
+        
+        # Invert the x-axis
+        lidar_data[:, 0] *= -1
+        
+        # Step 7: Select the closest 100 point clouds
+        # Calculate distances from the origin (or any other reference point)
+        distances = np.sqrt(lidar_data[:, 0]**2 + lidar_data[:, 1]**2 + lidar_data[:, 2]**2)
+        
+        # Get the indices of the 100 closest points
+        closest_indices = np.argsort(distances)[:100]
+        
+        # Keep only the 100 closest points
+        lidar_data = lidar_data[closest_indices]
+        
+        print(f"num pointcloud: pre1frame={len(self.lidar_data_prev)}, step={step}, post2frame={len(lidar_data)}")
+        
+        return lidar_data
+
+    # def _preprocess_lidar(self, input_data, step):
+    #     lidar_data = input_data['lidar'][1][:, :3]
+        
+    #     # merge with current lidar data
+    #     lidar_data = np.vstack((self.lidar_data_prev, lidar_data))
+        
+    #     # update self.lidar_data_prev
+    #     self.lidar_data_prev = input_data['lidar'][1][:, :3]
+        
+    #     #---------
+    #     # Preprocess the point cloud
+    #     # 1: limit the height and distance
+    #     lidar_data = lidar_data[(lidar_data[:, 2] > self.h_lower -2.5) & (lidar_data[:, 2] < self.h_upper-2.5)]
+    #     # # 1.5: limit the distance
+    #     # lidar_data = lidar_data[(lidar_data[:, 0]**2 + lidar_data[:, 1]**2) < 4**2]
+        
+    #     # 2: Statistical Outlier Removal (SOR):
+    #         # convert to Open3D point cloud format
+    #     pcd = o3d.geometry.PointCloud()
+    #     pcd.points = o3d.utility.Vector3dVector(lidar_data[:,:3])
+    #         # Apply statistical outlier removal ~ k = n/100
+    #     pcd_SOR, ind = pcd.remove_statistical_outlier(nb_neighbors=10, std_ratio=0.5)
+    #     #     Convert back to numpy array (filtered X, Y, Z)
+    #     # xyz_SOR = np.asarray(pcd_SOR.points)
+    #     #     # Retain intensity from the original point cloud for the filtered points
+    #     # intensity_SOR = lidar_data[ind, 3]
+    #     # pointcloud_SOR = np.hstack((xyz_SOR, intensity_SOR.reshape(-1, 1)))
+        
+    #     # 3: voxel Grid Down Sampling
+    #     voxel_size = 0.2
+    #     pcd_downsampled = pcd_SOR.voxel_down_sample(voxel_size)
+        
+    #         # Convert back to numpy array (downsampled X, Y, Z)
+    #     xyz_downsampled = np.asarray(pcd_downsampled.points)
+
+    #     lidar_data = np.array(xyz_downsampled)
+    #     lidar_data[:, 0] *= -1  # invert x-axis left right
+    #     print(f"num pointcloud: pre1frame={len(self.lidar_data_prev)}, step={step}, post2frame={len(lidar_data)}")
+        
+    #     # select only the closest 100 points
+        
+    #     return lidar_data
+    
     # ---discrete CBF---
     def _h(self, lidar_data):
         """return the barrier function output of h(t)"""
@@ -847,7 +1023,7 @@ class discreteCBF():
         Y = lidar_data[:, 1]
         return np.sqrt(X**2 + Y**2) - self.R_i
     
-    def _h_t1(self, lidar_data, steering, v_e=None, a_e=None, R_e=None): # v_e, a_e, R_e
+    def _h_t1(self, lidar_data, steering, v_e=None, a_e=None): # v_e, a_e, R_e
         """return the barrier function output of h(t+1)
         consider the ego head in y+ front direction and steer in +x right
         """
@@ -856,56 +1032,29 @@ class discreteCBF():
             v_e = self.v_e
         if a_e == None:
             a_e = self.a_e
-        if R_e == None:
-            R_e = self.R_e 
-        
+            
         X = lidar_data[:, 0]
-        Y = lidar_data[:, 1]        
-        arc = (v_e + 1/2 * a_e * self.delta_time)* self.delta_time
-        angle = arc/self.R_e
-        dy = - np.sin(angle) * self.R_e - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
-        dx = (1-np.cos(angle)) * self.R_e * steering - (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
-        # dtheta = arc/angle
+        Y = lidar_data[:, 1]     
+
+        if abs(steering) < 0.05: # desensitize steering
+            dy = (v_e + 1/2 * a_e * self.delta_time)* self.delta_time - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
+            dx = (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
+        else:
+            self.R_e = (self.agent_backwhl2cm**2 + self.agent_front2back**2*abs(1/math.tan(steering)))
+            arc = (v_e + 1/2 * a_e * self.delta_time)* self.delta_time
+            angle = arc/self.R_e
+            dy = - np.sin(angle) * self.R_e - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
+            dx = (1-np.cos(angle)) * self.R_e * steering - (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
+            # dtheta = arc/angle
         return np.sqrt((X+dx)**2 + (Y+dy)**2) - self.R_i
-
-    def _preprocess_lidar(self, input_data, step):
-        lidar_data = input_data['lidar'][1][:, :3]
-        
-        # merge with current lidar data
-        lidar_data = np.vstack((self.lidar_data_prev, lidar_data))
-        
-        # update self.lidar_data_prev
-        self.lidar_data_prev = input_data['lidar'][1][:, :3]
-        
-        #---------
-        # Preprocess the point cloud
-        # 1: limit the height
-        lidar_data = lidar_data[(lidar_data[:, 2] > self.h_lower -2.5) & (lidar_data[:, 2] < self.h_upper-2.5)]
-        
-        # 2: Statistical Outlier Removal (SOR):
-            # convert to Open3D point cloud format
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(lidar_data[:,:3])
-            # Apply statistical outlier removal ~ k = n/100
-        pcd_SOR, ind = pcd.remove_statistical_outlier(nb_neighbors=10, std_ratio=0.5)
-        #     Convert back to numpy array (filtered X, Y, Z)
-        # xyz_SOR = np.asarray(pcd_SOR.points)
-        #     # Retain intensity from the original point cloud for the filtered points
-        # intensity_SOR = lidar_data[ind, 3]
-        # pointcloud_SOR = np.hstack((xyz_SOR, intensity_SOR.reshape(-1, 1)))
-        
-        # 3: voxel Grid Down Sampling
-        voxel_size = 0.2
-        pcd_downsampled = pcd_SOR.voxel_down_sample(voxel_size)
-        
-            # Convert back to numpy array (downsampled X, Y, Z)
-        xyz_downsampled = np.asarray(pcd_downsampled.points)
-
-        lidar_data = np.array(xyz_downsampled)
-        lidar_data[:, 0] *= -1  # invert x-axis left right
-        print(f"num pointcloud: pre1frame={len(self.lidar_data_prev)}, step={step}, post2frame={len(lidar_data)}")
-        
-        return lidar_data
+    
+    def _constraint(self, lidar_data, steering, v_e=None, a_e=None):
+        if abs(steering) > 0.05: # desensitize the value
+            R_e = (self.agent_backwhl2cm**2 + self.agent_front2back**2*abs(1/math.tan(steering)))
+        else:
+            R_e = np.inf
+        # return ((self._h_t1(lidar_data, steering, v_e, a_e) - (1 -self.gamma)*self._h(lidar_data))>0) | (lidar_data[:,1]<0)
+        return ((self._h_t1(lidar_data, steering, v_e, a_e) - (1 -self.gamma)*self._h(lidar_data))>0)| (lidar_data[:,1]<0)
 
     # Function to update the plot for each frame (real-time data)
     def _update_lidar_plot(self, lidar_data, mask_satisfy, mask_not_satisfy):
