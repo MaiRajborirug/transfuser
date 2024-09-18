@@ -299,13 +299,24 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         
         tick_data = self.tick(input_data)
         
-        ##--discrete CBF-----
+        ## NOTE: --discrete CBF-----
+        # get vehicle state
+        v_e = np.maximum(0,input_data["speed"][1]["speed"]) # speedometer in vehicle direction (m/s)
+        self.w_e = input_data['imu'][1][5] # angular vel in z-axis (rad/s)
+        a_e = input_data["imu"][1][0] # accelaration in vehicle direction (m/s^2)
+        if abs(self.control.steer) > 0.05: # desensitize the value
+            R_e = (self.dcbf.agent_backwhl2cm**2 + self.dcbf.agent_front2back**2*abs(1/math.tan(self.control.steer)))
+        else:
+            R_e = np.inf
+
         lidar_data = self.dcbf._preprocess_lidar(input_data, self.step)
-        # get 
-        
-        mask_satisfy = ((self.dcbf._h_t1(lidar_data, self.control.steer) - (1 -self.dcbf.gamma)*self.dcbf._h(lidar_data))>0) | (lidar_data[:,1]<0)
+        mask_satisfy = ((self.dcbf._h_t1(lidar_data, self.control.steer, v_e, a_e, R_e) - (1 -self.dcbf.gamma)*self.dcbf._h(lidar_data))>0) | (lidar_data[:,1]<0)
         mask_not_satisfy = mask_satisfy ==0
         self.dcbf._update_lidar_plot(lidar_data, mask_satisfy, mask_not_satisfy)
+        
+        # optimization:u_nominal = (a_e, R_e)
+        # u = argmin_u |u_nominal - u|^2 such that mask_satisfy(closest 10 lidar)=1
+        
         ##----------
         
 
@@ -765,22 +776,66 @@ class EgoModel():
 
         return next_locs, next_yaws, next_spds
 
+class PIDController(object):
+    def __init__(self, K_P=1.0, K_I=0.0, K_D=0.0, n=20):
+        self._K_P = K_P
+        self._K_I = K_I
+        self._K_D = K_D
+
+        self._window = deque([0 for _ in range(n)], maxlen=n)
+
+    def step(self, error):
+        self._window.append(error)
+
+        if len(self._window) >= 2:
+            integral = np.mean(self._window)
+            derivative = (self._window[-1] - self._window[-2])
+        else:
+            integral = 0.0
+            derivative = 0.0
+
+        return self._K_P * error + self._K_I * integral + self._K_D * derivative
+
 class discreteCBF():
     def __init__(self, v_i=5, R_i=20, gamma=0.03, h_lower=0.3, h_upper=0.5):
+        """
+        v_i = object speed (assume they are all heading toward the ego vehicle)
+        R_i = safeset radius
+        gamma = coefficient for h(t+1) > (1-gamma)h(t)
+        h_lower = lidar lower bound of the height
+        h_upper = lidar upper bound of the height
+        
+        agent_front2back_whl = distance from front wheel to back wheel
+        agent_backwhl2cm = distance from back wheel to center of mass
+        
+        R_e = turning radius
+        v_e = vehicle speed
+        a_e = vehicle acceleration
+        """
         self.scatter = None
         self.lidar_data_prev = np.array([[100,100,100]]) # random far pointcloud
         fig = plt.figure()
         self.ax = fig.add_subplot(111, projection='3d')
         
-        # initiate CBF parameter
+        # NOTE: for control mapping
+        self.delta_time = 0.05 # CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
+        self.throttle_controller = PIDController(K_P=5.0, K_I=0.5, K_D=1, n=20) # throttle PID controller
+        self.c_speed_sqrt = 0.032 # constant for throttle_control
+        self.c_acc = 0.025
+        self.c_w_sq = 0.04
+        self.c_w = 0.01
+        self.R_e_min = 2.5 # This is the minimum turning radius of the vehicle when steer = 1
+        self.agent_front2back = 2.9 # This property are from agent_vehicle.get_physics_control()
+        self.agent_backwhl2cm = 1.75 # This property are from agent_vehicle.get_physics_control()
+        
+        # NOTE: initiate CBF parameter
         self.v_i = v_i # m/s
         self.R_i = R_i # m
         self.gamma = gamma
-        self.delta_time = 0.05 # CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
         self.h_lower = h_lower
         self.h_upper = h_upper
 
-        # now use random fixed ego states and control
+        # NOTE: use when random fixed ego states and control
         self.v_e = 5
         self.a_e = 4
         self.R_e = 2
@@ -792,13 +847,21 @@ class discreteCBF():
         Y = lidar_data[:, 1]
         return np.sqrt(X**2 + Y**2) - self.R_i
     
-    def _h_t1(self, lidar_data, steering): # v_e, a_e, R_e
+    def _h_t1(self, lidar_data, steering, v_e=None, a_e=None, R_e=None): # v_e, a_e, R_e
         """return the barrier function output of h(t+1)
         consider the ego head in y+ front direction and steer in +x right
         """
+        # use fixed values if not provided
+        if v_e == None:
+            v_e = self.v_e
+        if a_e == None:
+            a_e = self.a_e
+        if R_e == None:
+            R_e = self.R_e 
+        
         X = lidar_data[:, 0]
         Y = lidar_data[:, 1]        
-        arc = (self.v_e + 1/2 * self.a_e * self.delta_time)* self.delta_time
+        arc = (v_e + 1/2 * a_e * self.delta_time)* self.delta_time
         angle = arc/self.R_e
         dy = - np.sin(angle) * self.R_e - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
         dx = (1-np.cos(angle)) * self.R_e * steering - (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
@@ -838,19 +901,6 @@ class discreteCBF():
             # Convert back to numpy array (downsampled X, Y, Z)
         xyz_downsampled = np.asarray(pcd_downsampled.points)
 
-        #     # Downsample intensity: choose the nearest point intensity or take the average
-        #     # For simplicity, here we will take the average intensity for each voxel
-        # intensity_downsampled = []
-        # for point in xyz_downsampled:
-        #     # Find the points in the original point cloud that fall into this voxel
-        #     distances = np.linalg.norm(lidar_data[:, :3] - point, axis=1)
-        #     mask = distances < voxel_size
-        #     if np.any(mask):
-        #         breakpoint()
-        #         intensity_downsampled.append(np.mean(lidar_data[mask, 3]))
-        #     else:
-        #         intensity_downsampled.append(0)  # Handle cases with no intensity (optional)
-
         lidar_data = np.array(xyz_downsampled)
         lidar_data[:, 0] *= -1  # invert x-axis left right
         print(f"num pointcloud: pre1frame={len(self.lidar_data_prev)}, step={step}, post2frame={len(lidar_data)}")
@@ -867,13 +917,6 @@ class discreteCBF():
         Z = lidar_data[:, 2]
 
         # Create the scatter plot
-        # self.scatter = self.ax.scatter(X, Y, Z, c=Z, cmap='viridis', alpha=0.8, s=0.05)
-        # theta = np.linspace(0, 2*np.pi, 100)
-        # x = self.R_i * np.cos(theta)
-        # y = self.R_i * np.sin(theta)
-        # x_mesh, y_mesh = np.meshgrid(x, y)
-        # z_mesh = np.zeros_like(x_mesh)  # adjust this if you want the circle to be at a different height
-        # self.ax.plot_surface(x_mesh, y_mesh, z_mesh, color='blue', linewidth=2, linestyle='dashed', alpha=0.5)
         scatter_satisfy = self.ax.scatter(X[mask_satisfy], Y[mask_satisfy], Z[mask_satisfy], c='g', label="Satisfy CBF (1)", alpha=0.8, s=1)
         scatter_not_satisfy = self.ax.scatter(X[mask_not_satisfy], Y[mask_not_satisfy], Z[mask_not_satisfy], c='r', label="Not satisfy CBF (0)", alpha=0.8, s=3)
         scatter_car = self.ax.scatter([0],[0],[0], c='black', label="Car face up", marker='^', s=40)
