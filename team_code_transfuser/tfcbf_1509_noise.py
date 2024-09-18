@@ -298,9 +298,12 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         
         tick_data = self.tick(input_data)
         
-        #--discrete CBF--
-        self.dcbf._update_lidar_plot(input_data, self.step)
-        #------
+        #--discrete CBF-----
+        lidar_data = self.dcbf._preprocess_lidar(input_data, self.step)
+        mask_satisfy = ((self.dcbf._h_t1(lidar_data, self.control.steer) - (1-self.dcbf.gamma)*self.dcbf._h(lidar_data))>0) | (lidar_data[:,1]<0)
+        mask_not_satisfy = mask_satisfy ==0
+        self.dcbf._update_lidar_plot(lidar_data)
+        #----------
         
 
         # repeat actions twice to ensure LiDAR data availability # this part make us skip lidar
@@ -780,14 +783,18 @@ class discreteCBF():
         self.R_e = 4
         
     # ---discrete CBF---
-    def _h(self, X, Y):
+    def _h(self, lidar_data):
         """return the barrier function output of h(t)"""
+        X = lidar_data[:, 0]
+        Y = lidar_data[:, 1]
         return np.sqrt(X**2 + Y**2) - self.R_i
     
-    def _h_t1(self, X, Y, steering):
+    def _h_t1(self, lidar_data, steering): # v_e, a_e, R_e
         """return the barrier function output of h(t+1)
         consider the ego head in y+ front direction and steer in +x left
         """
+        X = lidar_data[:, 0]
+        Y = lidar_data[:, 1]        
         arc = (self.v_e + 1/2 * self.a_e * self.delta_time)* self.delta_time
         angle = arc/self.R_e
         dy = - np.sin(angle) * self.R_e - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
@@ -796,10 +803,7 @@ class discreteCBF():
         # dtheta = arc/angle
         return np.sqrt((X+dx)**2 + (Y+dy)**2) - self.R_i
 
-    # Function to update the plot for each frame (real-time data)
-    def _update_lidar_plot(self, input_data, step):
-        self.ax.cla()  # Clear the previous plot
-    
+    def _preprocess_lidar(self, input_data, step):
         lidar_data = input_data['lidar'][1][:, :3]
         
         # merge with current lidar data
@@ -846,8 +850,14 @@ class discreteCBF():
         #         intensity_downsampled.append(0)  # Handle cases with no intensity (optional)
 
         lidar_data = np.array(xyz_downsampled)
+        lidar_data[:, 1] *= -1  # invert x-axis
         print(f"num pointcloud: pre1frame={len(self.lidar_data_prev)}, step={step}, post2frame={len(lidar_data)}")
-        # ---------
+        
+        return lidar_data
+
+    # Function to update the plot for each frame (real-time data)
+    def _update_lidar_plot(self, lidar_data):
+        self.ax.cla()  # Clear the previous plot
 
         # Extract X, Y, Z from the point cloud
         X = lidar_data[:, 0]
