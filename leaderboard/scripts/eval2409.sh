@@ -34,40 +34,38 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-# If SAFE_PATH is not provided, generate it automatically
-if [ -z "$SAFE_PATH" ]; then
-    # Get today's date
-    DATE=$(date +%Y%m%d)
-    
-    # Extract TEAM_AGENT name without directory or extension
-    TEAM_AGENT_NAME=$(basename ${TEAM_AGENT} .py)
-
-    # Extract ROUTES name without directory or extension
-    ROUTES_NAME=$(basename ${ROUTES} .xml)
-
-    # Set NOISE
-    NOISE=0.2
-
-    # Count how many times this specific configuration has been run today
-    COUNT=1
-    SAVE_FOLDER="/media/haoming/970EVO/pharuj/cdc_eval/"
-    SAVE_PATTERN="${SAVE_FOLDER}${DATE}-${TEAM_AGENT_NAME}-${NOISE}-${ROUTES_NAME}-"
-    while [ -d "${SAVE_PATTERN}${COUNT}" ]; do
-        COUNT=$((COUNT + 1))
-    done
-
-    # Construct SAVE_PATH
-    export SAVE_PATH="${SAVE_PATTERN}${COUNT}"
-else
-    export SAVE_PATH="$SAFE_PATH"
-fi
-
-echo "SAVE_PATH set to: $SAVE_PATH"
-
 # Loop for changing noise (if required, you can modify NOISE loop logic)
-for NOISE in $(seq 0.0 0.1 0.0) # increment by 0.1 to 1.0
+for NOISE in $(seq 0.0 0.5 1.0) # increment by 0.1 up to 1.0
 do
     export NOISE
+    
+    # If SAFE_PATH is not provided, generate it automatically for each NOISE level
+    if [ -z "$SAFE_PATH" ]; then
+        # Get today's date
+        DATE=$(date +%Y%m%d)
+        
+        # Extract TEAM_AGENT name without directory or extension
+        TEAM_AGENT_NAME=$(basename ${TEAM_AGENT} .py)
+
+        # Extract ROUTES name without directory or extension
+        ROUTES_NAME=$(basename ${ROUTES} .xml)
+
+        # Count how many times this specific configuration has been run today
+        COUNT=1
+        SAVE_FOLDER="/media/haoming/970EVO/pharuj/cdc_eval/"
+        SAVE_PATTERN="${SAVE_FOLDER}${DATE}-${TEAM_AGENT_NAME}-${NOISE}-${ROUTES_NAME}-"
+        while [ -d "${SAVE_PATTERN}${COUNT}" ]; do
+            COUNT=$((COUNT + 1))
+        done
+
+        # Construct SAVE_PATH for the current NOISE value
+        export SAVE_PATH="${SAVE_PATTERN}${COUNT}"
+    else
+        export SAVE_PATH="${SAFE_PATH}-${NOISE}"
+    fi
+
+    echo "SAVE_PATH set to: $SAVE_PATH"
+
     export CHECKPOINT_ENDPOINT="${SAVE_PATH}.json"
     
     # Run the simulation with the current noise setting

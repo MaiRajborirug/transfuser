@@ -318,7 +318,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
 
         mask_not_satisfy = mask_satisfy ==0
         
-        self.dcbf._update_lidar_plot(lidar_data, mask_satisfy, mask_not_satisfy)
+        # self.dcbf._update_lidar_plot(lidar_data, mask_satisfy, mask_not_satisfy)
         
         # pass the condition, no need to optimize
         
@@ -491,7 +491,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
                 a_e_i, steer_i = u
                 # Check if more than 95% of the closest 100 lidar points satisfy the CBF condition
                 # return np.mean(self.dcbf._constraint(lidar_data, steer_i, v_e, a_e_i)) > 0.90
-                return np.mean(self.dcbf._constraint(lidar_data, steer_i, v_e, a_e_i)) - self.dcbf.percentage_pass
+                return np.mean(self.dcbf._constraint(lidar_data, steer_i, v_e, a_e_i)) - 0 #self.dcbf.percentage_pass
             
             # --- do nother if passing condition ----
 
@@ -898,9 +898,16 @@ class discreteCBF():
         percentage_pass = percent of lidar points that need to pass the CBF condition
         """
         self.scatter = None
-        self.lidar_data_prev = np.array([[100,100,100]]) # random far pointcloud
-        fig = plt.figure()
-        self.ax = fig.add_subplot(111, projection='3d')
+        self.lidar_data_prev = np.array([[100,100,100]]) # random far
+        # self.fig = plt.figure()
+        # self.ax = self.fig.add_subplot(111, projection='3d')
+        
+        # if not hasattr(self, 'fig') or self.fig is None:
+        #     self.fig = plt.figure()
+        #     self.ax = self.fig.add_subplot(111, projection='3d')
+        # else:
+        #     self.ax.clear()
+        
         
         # NOTE: for control mapping
         self.delta_time = 0.05 # CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
@@ -1040,17 +1047,17 @@ class discreteCBF():
             dy = (v_e + 1/2 * a_e * self.delta_time)* self.delta_time - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
             dx = (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
         else:
-            self.R_e = (self.agent_backwhl2cm**2 + self.agent_front2back**2*abs(1/math.tan(steering)))
+            self.R_e = abs(self.agent_backwhl2cm**2 + self.agent_front2back**2*abs(1/math.tan(steering))) # >= 0
             arc = (v_e + 1/2 * a_e * self.delta_time)* self.delta_time
             angle = arc/self.R_e
             dy = - np.sin(angle) * self.R_e - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
-            dx = (1-np.cos(angle)) * self.R_e * steering - (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
+            dx = (1-np.cos(angle)) * self.R_e * np.sign(steering) - (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
             # dtheta = arc/angle
         return np.sqrt((X+dx)**2 + (Y+dy)**2) - self.R_i
     
     def _constraint(self, lidar_data, steering, v_e=None, a_e=None):
         if abs(steering) > 0.05: # desensitize the value
-            R_e = (self.agent_backwhl2cm**2 + self.agent_front2back**2*abs(1/math.tan(steering)))
+            R_e = abs(self.agent_backwhl2cm**2 + self.agent_front2back**2*abs(1/math.tan(steering)))
         else:
             R_e = np.inf
         # return ((self._h_t1(lidar_data, steering, v_e, a_e) - (1 -self.gamma)*self._h(lidar_data))>0) | (lidar_data[:,1]<0)
