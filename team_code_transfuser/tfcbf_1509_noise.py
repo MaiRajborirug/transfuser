@@ -22,7 +22,7 @@ from matplotlib.patches import Circle
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.animation import FuncAnimation
 import open3d as o3d
-from scipy.optimize import minimize # optimiza function
+from scipy.optimize import minimize, brute # optimiza function
 
 import itertools
 import pathlib
@@ -284,7 +284,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         # NOTE: add exponential noise to the lidar
         # Need to run this every step for GPS denoising
         self.d_std = NOISE
-        lidar_temp = input_data['lidar'][1][:, :3]
+        lidar_temp = input_data['lidar'][1][:, :2]
         
         # save lidar into folder
         np.save(os.path.join(SAVE_PATH, 'lidar_'+str(self.step)+'.npy'), input_data['lidar'][1])
@@ -295,8 +295,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         N, _ = lidar_temp.shape
         sigma_i = np.random.uniform(-self.d_std, self.d_std, N)
         exp_sigma_i = np.exp(sigma_i).reshape(-1, 1)
-        input_data['lidar'][1][:, :3] = lidar_temp * exp_sigma_i # add noise to lidar input
-        temp2 = input_data['lidar'][1][:, :3][0, 0]
+        input_data['lidar'][1][:, :2] = lidar_temp * exp_sigma_i # add noise to lidar input
         
         tick_data = self.tick(input_data)
         
@@ -318,7 +317,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
 
         mask_not_satisfy = mask_satisfy ==0
         
-        # self.dcbf._update_lidar_plot(lidar_data, mask_satisfy, mask_not_satisfy)
+        self.dcbf._update_lidar_plot(lidar_data, mask_satisfy, mask_not_satisfy)
         
         # pass the condition, no need to optimize
         
@@ -467,6 +466,10 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
                 # Will overwrite the stuck detector. If we are stuck in traffic we do want to wait it out.
 
         self.control = control
+        
+        throttle_tf = control.throttle
+        steer_tf = control.steer
+        brake_tf = control.brake
 
         self.update_gps_buffer(self.control, tick_data['compass'], tick_data['speed'])
         # NOTE: cv2 waitKey - to show the tfuse visualization
@@ -480,32 +483,26 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
             a_e_bound = (-13.0, 11.0)
             steer_bound = (-1, 1)
 
-            # ---- Objective Function ----
+            # NOTE: brute ----
+            # Objective function with penalty for constraint violation
             def objective(u):
                 a_e_i, steer_i = u
                 u_e = [a_e, self.control.steer]
-                return np.linalg.norm([10*(a_e_i - u_e[0]), (steer_i - u_e[1])])**2
+                
+                # Apply constraint, with a penalty for violation
+                constraint_violation = np.mean(self.dcbf._constraint(lidar_data, steer_i, v_e, a_e_i)) - self.dcbf.percentage_pass
+                penalty = 1e6 if constraint_violation < 0 else 0  # Large penalty if constraint is violated
+                
+                return np.linalg.norm([10 * (a_e_i - u_e[0]), (steer_i - u_e[1])]) ** 2 + penalty
 
-            # ---- Constraint Function ----
-            def constraint(u):
-                a_e_i, steer_i = u
-                # Check if more than 95% of the closest 100 lidar points satisfy the CBF condition
-                # return np.mean(self.dcbf._constraint(lidar_data, steer_i, v_e, a_e_i)) > 0.90
-                return np.mean(self.dcbf._constraint(lidar_data, steer_i, v_e, a_e_i)) - 0 #self.dcbf.percentage_pass
-            
-            # --- do nother if passing condition ----
-
-            # Initial guess (current control)
-            u_init = [a_e, self.control.steer]
-            # Set up the constraint
-            constraints = [{'type': 'ineq', 'fun': constraint}]
-
-            # Run the optimizer to minimize the difference
-            result = minimize(objective, u_init, bounds=[a_e_bound, steer_bound], constraints=constraints)
-
-            # # Extract optimized control values
-            a_e_opt, steer_opt = result.x
-            
+            # Define the ranges for brute-force optimization
+            ranges = (a_e_bound, steer_bound)
+            # Perform brute-force search
+            result = brute(objective, ranges=ranges, Ns=100, full_output=False, finish=None)
+        
+            # Extract optimized control values
+            a_e_opt, steer_opt = result
+            #----------
             # NOTE: map (a, phi) back to carla control (throttle, steering, break)
             if abs(a_e_opt) < steer_opt * 3: # prioritize turning arbitary comparison
                 # print('sc case 1')
@@ -539,15 +536,15 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
                 brake = 1
                 steer_opt = 0
 
-            # # ---- Update Control ----
-            print(f"Norminal : a{a_e:.2f}, th{self.control.throttle:.2f}, st{self.control.steer:.2f} / Optimized Control: a{a_e_opt:.2f}, th{throttle:.2f}, st{steer_opt:.2f}")
-
-            control.steer = steer
+           
+            control.steer = steer_opt
             control.throttle = np.minimum(throttle, control.throttle)
-            # control.brake = np.maximum(brake, control.brake)
+            control.brake = np.maximum(brake, control.brake)
+             # # ---- Update Control ----
+            print(f"Norminal : a{a_e:.2f}, th{throttle_tf:.2f}, st{steer_tf:.2f} / Optimized Control: a{a_e_opt:.2f}, th{control.throttle:.2f}, st{control.steer:.2f}")
             ##----------
         else:
-            print(f"CBF pass / Norminal : a{a_e:.2f}, th{self.control.throttle:.2f}, st{self.control.steer:.2f}")
+            print(f"CBF pass / Norminal : a{a_e:.2f}, th{throttle_tf:.2f}, st{steer_tf:.2f}")
         
         return control
 
@@ -879,7 +876,7 @@ class PIDController(object):
         return self._K_P * error + self._K_I * integral + self._K_D * derivative
 
 class discreteCBF():
-    def __init__(self, v_i=5, R_i=20, gamma=0.03, h_lower=0.3, h_upper=0.5, dist_interest=3, percentage_pass=0.95):
+    def __init__(self, v_i=5, R_i=2, gamma=0.03, h_lower=0.1, h_upper=0.5, dist_interest=3, percentage_pass=0.95):
         """
         v_i = object speed (assume they are all heading toward the ego vehicle)
         R_i = safeset radius
@@ -899,8 +896,8 @@ class discreteCBF():
         """
         self.scatter = None
         self.lidar_data_prev = np.array([[100,100,100]]) # random far
-        # self.fig = plt.figure()
-        # self.ax = self.fig.add_subplot(111, projection='3d')
+        self.fig = plt.figure()
+        self.ax = self.fig.add_subplot(111, projection='3d')
         
         # if not hasattr(self, 'fig') or self.fig is None:
         #     self.fig = plt.figure()
@@ -979,49 +976,6 @@ class discreteCBF():
         print(f"num pointcloud: pre1frame={len(self.lidar_data_prev)}, step={step}, post2frame={len(lidar_data)}")
         
         return lidar_data
-
-    # def _preprocess_lidar(self, input_data, step):
-    #     lidar_data = input_data['lidar'][1][:, :3]
-        
-    #     # merge with current lidar data
-    #     lidar_data = np.vstack((self.lidar_data_prev, lidar_data))
-        
-    #     # update self.lidar_data_prev
-    #     self.lidar_data_prev = input_data['lidar'][1][:, :3]
-        
-    #     #---------
-    #     # Preprocess the point cloud
-    #     # 1: limit the height and distance
-    #     lidar_data = lidar_data[(lidar_data[:, 2] > self.h_lower -2.5) & (lidar_data[:, 2] < self.h_upper-2.5)]
-    #     # # 1.5: limit the distance
-    #     # lidar_data = lidar_data[(lidar_data[:, 0]**2 + lidar_data[:, 1]**2) < 4**2]
-        
-    #     # 2: Statistical Outlier Removal (SOR):
-    #         # convert to Open3D point cloud format
-    #     pcd = o3d.geometry.PointCloud()
-    #     pcd.points = o3d.utility.Vector3dVector(lidar_data[:,:3])
-    #         # Apply statistical outlier removal ~ k = n/100
-    #     pcd_SOR, ind = pcd.remove_statistical_outlier(nb_neighbors=10, std_ratio=0.5)
-    #     #     Convert back to numpy array (filtered X, Y, Z)
-    #     # xyz_SOR = np.asarray(pcd_SOR.points)
-    #     #     # Retain intensity from the original point cloud for the filtered points
-    #     # intensity_SOR = lidar_data[ind, 3]
-    #     # pointcloud_SOR = np.hstack((xyz_SOR, intensity_SOR.reshape(-1, 1)))
-        
-    #     # 3: voxel Grid Down Sampling
-    #     voxel_size = 0.2
-    #     pcd_downsampled = pcd_SOR.voxel_down_sample(voxel_size)
-        
-    #         # Convert back to numpy array (downsampled X, Y, Z)
-    #     xyz_downsampled = np.asarray(pcd_downsampled.points)
-
-    #     lidar_data = np.array(xyz_downsampled)
-    #     lidar_data[:, 0] *= -1  # invert x-axis left right
-    #     print(f"num pointcloud: pre1frame={len(self.lidar_data_prev)}, step={step}, post2frame={len(lidar_data)}")
-        
-    #     # select only the closest 100 points
-        
-    #     return lidar_data
     
     # ---discrete CBF---
     def _h(self, lidar_data):
@@ -1083,8 +1037,8 @@ class discreteCBF():
         self.ax.set_zlabel('Z')
 
         # Set the axis limits
-        self.ax.set_xlim([-50, 50])  # X-axis range
-        self.ax.set_ylim([-50, 50])  # Y-axis range
+        self.ax.set_xlim([-10, 10])  # X-axis range
+        self.ax.set_ylim([-10, 10])  # Y-axis range
         self.ax.set_zlim([-25, 30])  # Z-axis range
 
         # Set the view angle for top-down view
