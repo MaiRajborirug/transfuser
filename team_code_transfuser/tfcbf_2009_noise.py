@@ -122,8 +122,8 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         self.steer_damping = self.config.steer_damping
         self.rgb_back = None #For debugging
         
-        #---discreteCBF----
-        self.dcbf = discreteCBF(h_upper=0.6, h_lower=0.2 ,v_i=0.5, R_i=1.5, gamma=0.03)
+        #---HOCBF----
+        self.hocbf = HOCBF(h_upper=0.6, h_lower=0.2 ,v_i=0.5, R_i=1.5, gamma=0.03, alpha_1=0.5, alpha_2=0.5)
 
     def _init(self):
         self._route_planner = RoutePlanner(self.config.route_planner_min_distance, self.config.route_planner_max_distance)
@@ -299,30 +299,27 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         
         tick_data = self.tick(input_data)
         
-        ## NOTE: --discrete CBF-----
+        ## NOTE: --HO CBF-----
         # get vehicle state
         v_e = np.maximum(0,input_data["speed"][1]["speed"]) # speedometer in vehicle direction (m/s)
         self.w_e = input_data['imu'][1][5] # angular vel in z-axis (rad/s)
         a_e = input_data["imu"][1][0] # accelaration in vehicle direction (m/s^2)
         
         if abs(self.control.steer) > 0.05: # desensitize the value
-            R_e = (self.dcbf.agent_backwhl2cm**2 + self.dcbf.agent_front2back**2*abs(1/math.tan(self.control.steer)))
+            R_e = (self.hocbf.agent_backwhl2cm**2 + self.hocbf.agent_front2back**2*abs(1/math.tan(self.control.steer)))
         else:
             R_e = np.inf
 
-        lidar_data = self.dcbf._preprocess_lidar(input_data, self.step)
+        lidar_data = self.hocbf._preprocess_lidar(input_data, self.step)
         
-        # mask_satisfy = ((self.dcbf._h_t1(lidar_data, self.control.steer, v_e, a_e) - (1 -self.dcbf.gamma)*self.dcbf._h(lidar_data))>0) | (lidar_data[:,1]<0)
-        mask_satisfy = self.dcbf._constraint(lidar_data, self.control.steer, v_e, a_e)
+        # mask_satisfy = ((self.hocbf._h_t1(lidar_data, self.control.steer, v_e, a_e) - (1 -self.hocbf.gamma)*self.hocbf._h(lidar_data))>0) | (lidar_data[:,1]<0)
+        mask_satisfy = self.hocbf._constraint(lidar_data, self.control.steer, v_e, a_e)
 
         mask_not_satisfy = mask_satisfy ==0
         
-        self.dcbf._update_lidar_plot(lidar_data, mask_satisfy, mask_not_satisfy)
+        self.hocbf._update_lidar_plot(lidar_data, mask_satisfy, mask_not_satisfy)
         
         # pass the condition, no need to optimize
-        
-        # keep only close distance lidar data 
-        close_data_lidar = lidar_data[(lidar_data[:, 0]**2 + lidar_data[:, 1]**2) < self.dcbf.dist_interest**2]
         
         # repeat actions twice to ensure LiDAR data availability # this part make us skip lidar
         if self.step % self.config.action_repeat == 1:
@@ -475,8 +472,8 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         # NOTE: cv2 waitKey - to show the tfuse visualization
         # cv2.waitKey(1) # 
         
-        # -- CBF--- self.dcbf.percentage_pass
-        if (np.mean(self.dcbf._constraint(lidar_data, self.control.steer, v_e, a_e))- self.dcbf.percentage_pass) < 0: # True = not pass CBF
+        # -- CBF--- self.hocbf.percentage_pass
+        if (np.mean(self.hocbf._constraint(lidar_data, self.control.steer, v_e, a_e))- self.hocbf.percentage_pass) < 0: # True = not pass CBF
             # optimization:u_nominal = (a_e, R_e)
             # Define bounds
             a_e_bound = (-13.0, 11.0)
@@ -489,7 +486,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
                 u_e = [a_e, self.control.steer]
                 
                 # Apply constraint, with a penalty for violation
-                constraint_violation = np.mean(self.dcbf._constraint(lidar_data, steer_i, v_e, a_e_i)) # - self.dcbf.percentage_pass
+                constraint_violation = np.mean(self.hocbf._constraint(lidar_data, steer_i, v_e, a_e_i)) # - self.hocbf.percentage_pass
                 penalty = 1e6 if constraint_violation < 0 else 0  # Large penalty if constraint is violated
                 
                 return np.linalg.norm([10 * (a_e_i - u_e[0]), (steer_i - u_e[1])]) ** 2 + penalty
@@ -504,23 +501,23 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
             #----------
             # NOTE: map (a, phi) back to carla control (throttle, steering, break)
             if abs(a_e_opt) < steer_opt * 3: # prioritize turning arbitary comparison
-                print('sc case 1')
+                print('sc case 1: a_e-> throttle')
                 # throttle mapping
                 a_control = a_e # before optimize        
-                delta = np.clip(math.sqrt(v_e) * self.dcbf.c_speed_sqrt + a_control * self.dcbf.c_acc + self.w_e**2 * self.dcbf.c_w_sq + abs(self.w_e) * self.dcbf.c_w, 0.0, 0.25)
-                throttle = self.dcbf.throttle_controller.step(delta)
+                delta = np.clip(math.sqrt(v_e) * self.hocbf.c_speed_sqrt + a_control * self.hocbf.c_acc + self.w_e**2 * self.hocbf.c_w_sq + abs(self.w_e) * self.hocbf.c_w, 0.0, 0.25)
+                throttle = self.hocbf.throttle_controller.step(delta)
                 throttle = np.clip(throttle+0.15, 0.0, 0.75)
                 # throttle = np.maximum(control.throttle /2, 0.25)
                 
                 # # print('change in phi', self.delta_time * phi_control)
-                # steer = math.atan(math.sqrt(self.dcbf.agent_front2back**2 / (R * R - self.dcbf.agent_backwhl2cm**2))) * np.sign(self.w_e)
+                # steer = math.atan(math.sqrt(self.hocbf.agent_front2back**2 / (R * R - self.hocbf.agent_backwhl2cm**2))) * np.sign(self.w_e)
                 # steer = np.clip(steer,-1,1)
             
             elif a_e_opt > -2: # prioritize throttle
-                print('sc case 2: throttle')
+                print('sc case 2: a_e_opt-> throttle')
                 # throttle mapping           
-                delta = np.clip(math.sqrt(v_e) * self.dcbf.c_speed_sqrt + a_e_opt * self.dcbf.c_acc + self.w_e**2 * self.dcbf.c_w_sq + abs(self.w_e) * self.dcbf.c_w, 0.0, 0.25)
-                throttle = self.dcbf.throttle_controller.step(delta)
+                delta = np.clip(math.sqrt(v_e) * self.hocbf.c_speed_sqrt + a_e_opt * self.hocbf.c_acc + self.w_e**2 * self.hocbf.c_w_sq + abs(self.w_e) * self.hocbf.c_w, 0.0, 0.25)
+                throttle = self.hocbf.throttle_controller.step(delta)
                 throttle = np.clip(throttle + 0.15, 0.0, 0.75) # 0.15
                 brake = 0
                 
@@ -538,16 +535,16 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
 
            
             control.steer = steer_opt
-            control.throttle = np.minimum(throttle, control.throttle)
+            control.throttle = throttle # np.minimum(throttle, control.throttle)
             control.brake = np.maximum(brake, control.brake)
              # # ---- Update Control ----
             print(f"Nom->CBF : a{a_e:.2f}->{a_e_opt:.2f}, th{throttle_tf:.2f}->{control.throttle:.2f}, st{steer_tf:.2f}->{control.steer:.2f}")
-            print(f"Nom %->CBF%: {np.mean(self.dcbf._constraint(lidar_data, steer_tf, v_e, a_e)):.3f}->{np.mean(self.dcbf._constraint(lidar_data, control.steer, v_e, a_e_opt)):.3f}")
+            print(f"Nom %->CBF%: {np.mean(self.hocbf._constraint(lidar_data, steer_tf, v_e, a_e)):.3f}->{np.mean(self.hocbf._constraint(lidar_data, control.steer, v_e, a_e_opt)):.3f}")
             # breakpoint()
             ##----------
         else:
             print(f"Nom : a{a_e:.2f}, th{throttle_tf:.2f}, st{steer_tf:.2f}")
-            print(f"Nom %: {np.mean(self.dcbf._constraint(lidar_data, steer_tf, v_e, a_e)):.3f}")
+            print(f"Nom %: {np.mean(self.hocbf._constraint(lidar_data, steer_tf, v_e, a_e)):.3f}")
         return control
 
     def bb_detected_in_front_of_vehicle(self, ego_speed):
@@ -877,8 +874,9 @@ class PIDController(object):
 
         return self._K_P * error + self._K_I * integral + self._K_D * derivative
 
-class discreteCBF():
-    def __init__(self, v_i=5, R_i=2, gamma=0.03, h_lower=0.1, h_upper=0.5, dist_interest=3, percentage_pass=0.95):
+class HOCBF():
+    def __init__(self, v_i=5, R_i=2, gamma=0.03, h_lower=0.1, h_upper=0.5, dist_interest=3, percentage_pass=0.97,
+                 alpha_1=0.5, alpha_2=0.5):
         """
         v_i = object speed (assume they are all heading toward the ego vehicle)
         R_i = safeset radius
@@ -893,7 +891,6 @@ class discreteCBF():
         v_e = vehicle speed
         a_e = vehicle acceleration
         
-        dist_interest = distance of interest lidar for optimization
         percentage_pass = percent of lidar points that need to pass the CBF condition
         """
         self.scatter = None
@@ -925,13 +922,11 @@ class discreteCBF():
         self.gamma = gamma
         self.h_lower = h_lower
         self.h_upper = h_upper
-        self.dist_interest = 3 # m
-        self.percentage_pass = 0.95
+        self.percentage_pass = percentage_pass
 
         # NOTE: use when random fixed ego states and control
-        self.v_e = 5
-        self.a_e = 4
-        self.R_e = 2
+        self.alpha_1 = alpha_1
+        self.alpha_2 = alpha_2
 
     def _preprocess_lidar(self, input_data, step):
         # Step 1: Extract lidar data
@@ -965,51 +960,70 @@ class discreteCBF():
         # Invert the x-axis
         lidar_data[:, 0] *= -1
         
-        # Step 7: Select the closest 100 point clouds
+        # Step 7: Select the closest n point clouds
         # Calculate distances from the origin (or any other reference point)
         distances = np.sqrt(lidar_data[:, 0]**2 + lidar_data[:, 1]**2 + lidar_data[:, 2]**2)
         
-        # Get the indices of the 100 closest points
-        closest_indices = np.argsort(distances)[:100]
+        # Get the indices of the n closest points
+        closest_indices = np.argsort(distances)[:30]
         
-        # Keep only the 100 closest points
+        # Keep only the n closest points
         lidar_data = lidar_data[closest_indices]
         
         print(f"num pointcloud: pre1frame={len(self.lidar_data_prev)}, step={step}, post2frame={len(lidar_data)}")
         
         return lidar_data
     
-    # ---discrete CBF---
+    # ---HO CBF---
     def _h(self, lidar_data):
         """return the barrier function output of h(t)"""
         X = lidar_data[:, 0]
         Y = lidar_data[:, 1]
-        return np.sqrt(X**2 + Y**2) - self.R_i
+        return 1/2*((X**2 + Y**2) - self.R_i)
     
-    def _h_t1(self, lidar_data, steering, v_e=None, a_e=None): # v_e, a_e, R_e
-        """return the barrier function output of h(t+1)
-        consider the ego head in y+ front direction and steer in +x right
-        """
-        # use fixed values if not provided
-        if v_e == None:
-            v_e = self.v_e
-        if a_e == None:
-            a_e = self.a_e
-            
+    def _h1(self, lidar_data, v_e):
         X = lidar_data[:, 0]
-        Y = lidar_data[:, 1]     
+        Y = lidar_data[:, 1]
+        R = np.sqrt(X**2 + Y**2)
+        return X*(- self.v_i * X / R) + Y * (-v_e - self.v_i * Y / R) + self.alpha_1 * self._h(lidar_data)
+    
+    def _h2(self, lidar_data, v_e, a_e, R_e):
+        X = lidar_data[:, 0]
+        Y = lidar_data[:, 1]
+        R = np.sqrt(X**2 + Y**2)
+        vT_v = 0 # (self.v_i*X/R)**2 + (v_e + self.v_i*Y/R)**2
+        
+        u_y = a_e
+        u_x = v_e**2 / R_e
+        vT_u = (-self.v_i*X/R) * u_y + (-self.v_i*Y/R-v_e) * u_x
+        sT_v = X*(- self.v_i * X / R) + Y * (-v_e - self.v_i * Y / R)
+        return vT_v + vT_u + self.alpha_1*sT_v + self.alpha_2*self._h(lidar_data)
 
-        if abs(steering) < 0.01: # desensitize steering
-            dy = (v_e + 1/2 * a_e * self.delta_time)* self.delta_time - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
-            dx = (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
-        else:
-            self.R_e = abs(self.agent_backwhl2cm**2 + self.agent_front2back**2*abs(1/math.tan(steering))) # >= 0
-            arc = (v_e + 1/2 * a_e * self.delta_time)* self.delta_time
-            angle = arc/self.R_e
-            dy = - np.sin(angle) * self.R_e - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
-            dx = -(1-np.cos(angle)) * self.R_e * np.sign(steering) - (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
-            # dtheta = arc/angle
-        return np.sqrt((X+dx)**2 + (Y+dy)**2) - self.R_i
+    
+    # def _h_t1(self, lidar_data, steering, v_e=None, a_e=None): # v_e, a_e, R_e
+    #     """return the barrier function output of h(t+1)
+    #     consider the ego head in y+ front direction and steer in +x right
+    #     """
+    #     # use fixed values if not provided
+    #     if v_e == None:
+    #         v_e = self.v_e
+    #     if a_e == None:
+    #         a_e = self.a_e
+            
+    #     X = lidar_data[:, 0]
+    #     Y = lidar_data[:, 1]     
+
+    #     if abs(steering) < 0.01: # desensitize steering
+    #         dy = (v_e + 1/2 * a_e * self.delta_time)* self.delta_time - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
+    #         dx = (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
+    #     else:
+    #         self.R_e = abs(self.agent_backwhl2cm**2 + self.agent_front2back**2*abs(1/math.tan(steering))) # >= 0
+    #         arc = (v_e + 1/2 * a_e * self.delta_time)* self.delta_time
+    #         angle = arc/self.R_e
+    #         dy = - np.sin(angle) * self.R_e - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
+    #         dx = -(1-np.cos(angle)) * self.R_e * np.sign(steering) - (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
+    #         # dtheta = arc/angle
+    #     return np.sqrt((X+dx)**2 + (Y+dy)**2) - self.R_i
     
     def _constraint(self, lidar_data, steering, v_e=None, a_e=None):
         if abs(steering) > 0.01: # desensitize the value
@@ -1017,7 +1031,8 @@ class discreteCBF():
         else:
             R_e = np.inf
         # return ((self._h_t1(lidar_data, steering, v_e, a_e) - (1 -self.gamma)*self._h(lidar_data))>0) | (lidar_data[:,1]<0)
-        return ((self._h_t1(lidar_data, steering, v_e, a_e) - (1 -self.gamma)*self._h(lidar_data))>0)
+        # return self._h(lidar_data) >= 0 & self._h1(lidar_data, v_e) >= 0 & self._h2(lidar_data, v_e, a_e, R_e) >= 0
+        return self._h2(lidar_data, v_e, a_e, R_e) >= 0
 
     # Function to update the plot for each frame (real-time data)
     def _update_lidar_plot(self, lidar_data, mask_satisfy, mask_not_satisfy):
