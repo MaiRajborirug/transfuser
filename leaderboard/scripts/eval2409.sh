@@ -13,7 +13,7 @@ export LEADERBOARD_ROOT=${WORK_DIR}/leaderboard
 export PYTHONPATH="${CARLA_ROOT}/PythonAPI/carla/":"${SCENARIO_RUNNER_ROOT}":"${LEADERBOARD_ROOT}":${PYTHONPATH}
 
 export SCENARIOS=${WORK_DIR}/leaderboard/data/longest6/eval_scenarios.json
-export REPETITIONS=1
+export REPETITIONS=10
 export CHALLENGE_TRACK_CODENAME=MAP # SENSORS, MAP
 export ROUTES=/media/haoming/970EVO/pharuj/git/transfuser/leaderboard/data/longest6/longest6_crashes2.xml
 
@@ -35,7 +35,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Loop for changing noise (if required, you can modify NOISE loop logic)
-for NOISE in $(seq 0.0 0.2 0.0) # increment by 0.1 up to 1.0
+for NOISE in $(seq 0.0 0.1 1.0) # increment by 0.1 up to 1.0
 do
     export NOISE
     

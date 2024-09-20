@@ -317,7 +317,8 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
 
         mask_not_satisfy = mask_satisfy ==0
         
-        self.hocbf._update_lidar_plot(lidar_data, mask_satisfy, mask_not_satisfy)
+        # NOTE: visualize data
+        # self.hocbf._update_lidar_plot(lidar_data, mask_satisfy, mask_not_satisfy)
         
         # pass the condition, no need to optimize
         
@@ -895,8 +896,8 @@ class HOCBF():
         """
         self.scatter = None
         self.lidar_data_prev = np.array([[100,100,100]]) # random far
-        self.fig = plt.figure()
-        self.ax = self.fig.add_subplot(111, projection='3d')
+        # self.fig = plt.figure()
+        # self.ax = self.fig.add_subplot(111, projection='3d')
         
         # if not hasattr(self, 'fig') or self.fig is None:
         #     self.fig = plt.figure()
@@ -998,32 +999,6 @@ class HOCBF():
         vT_u = (-self.v_i*X/R) * u_y + (-self.v_i*Y/R-v_e) * u_x
         sT_v = X*(- self.v_i * X / R) + Y * (-v_e - self.v_i * Y / R)
         return vT_v + vT_u + self.alpha_1*sT_v + self.alpha_2*self._h(lidar_data)
-
-    
-    # def _h_t1(self, lidar_data, steering, v_e=None, a_e=None): # v_e, a_e, R_e
-    #     """return the barrier function output of h(t+1)
-    #     consider the ego head in y+ front direction and steer in +x right
-    #     """
-    #     # use fixed values if not provided
-    #     if v_e == None:
-    #         v_e = self.v_e
-    #     if a_e == None:
-    #         a_e = self.a_e
-            
-    #     X = lidar_data[:, 0]
-    #     Y = lidar_data[:, 1]     
-
-    #     if abs(steering) < 0.01: # desensitize steering
-    #         dy = (v_e + 1/2 * a_e * self.delta_time)* self.delta_time - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
-    #         dx = (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
-    #     else:
-    #         self.R_e = abs(self.agent_backwhl2cm**2 + self.agent_front2back**2*abs(1/math.tan(steering))) # >= 0
-    #         arc = (v_e + 1/2 * a_e * self.delta_time)* self.delta_time
-    #         angle = arc/self.R_e
-    #         dy = - np.sin(angle) * self.R_e - (self.v_i * self.delta_time * Y / np.sqrt(X**2 + Y**2))
-    #         dx = -(1-np.cos(angle)) * self.R_e * np.sign(steering) - (self.v_i * self.delta_time * X / np.sqrt(X**2 + Y**2))
-    #         # dtheta = arc/angle
-    #     return np.sqrt((X+dx)**2 + (Y+dy)**2) - self.R_i
     
     def _constraint(self, lidar_data, steering, v_e=None, a_e=None):
         if abs(steering) > 0.01: # desensitize the value
