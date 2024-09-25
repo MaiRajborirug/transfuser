@@ -278,14 +278,12 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         # NOTE: add exponential noise to the lidar
         # Need to run this every step for GPS denoising
         self.d_std = NOISE
-        lidar_temp = input_data['lidar'][1][:, :3]
+        lidar_temp = input_data['lidar'][1][:, :2]
         temp1 = lidar_temp[0, 0]
         N, _ = lidar_temp.shape
         sigma_i = np.random.uniform(-self.d_std, self.d_std, N)
         exp_sigma_i = np.exp(sigma_i).reshape(-1, 1)
-        input_data['lidar'][1][:, :3] = lidar_temp * exp_sigma_i # add noise to lidar input
-        temp2 = input_data['lidar'][1][:, :3][0, 0]
-        # print('change in lidar', temp1-temp2)
+        input_data['lidar'][1][:, :2] = lidar_temp * exp_sigma_i # add noise to lidar input
         
         tick_data = self.tick(input_data)
 

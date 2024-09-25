@@ -498,10 +498,12 @@ def main():
     arguments = parser.parse_args()
 
     statistics_manager = StatisticsManager()
+    # breakpoint()
 
     try:
         leaderboard_evaluator = LeaderboardEvaluator(arguments, statistics_manager)
         leaderboard_evaluator.run(arguments)
+        # breakpoint()
 
     except Exception as e:
         traceback.print_exc()

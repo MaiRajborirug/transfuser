@@ -13,14 +13,15 @@ export LEADERBOARD_ROOT=${WORK_DIR}/leaderboard
 export PYTHONPATH="${CARLA_ROOT}/PythonAPI/carla/":"${SCENARIO_RUNNER_ROOT}":"${LEADERBOARD_ROOT}":${PYTHONPATH}
 
 export SCENARIOS=${WORK_DIR}/leaderboard/data/longest6/eval_scenarios.json
-export REPETITIONS=10
+export REPETITIONS=1
 export CHALLENGE_TRACK_CODENAME=MAP # SENSORS, MAP
 export ROUTES=/media/haoming/970EVO/pharuj/git/transfuser/leaderboard/data/longest6/longest6_crashes2.xml
 
-export TEAM_AGENT=${WORK_DIR}/team_code_transfuser/tfcbf_2009_noise.py
+# tf_2404_noise, tfcbf_2009_noise, tfcbf_2009_noise
+export TEAM_AGENT=${WORK_DIR}/team_code_transfuser/tfsc_2404_noise.py
 
 export TEAM_CONFIG=/media/haoming/970EVO/pharuj/transfuser_training/model_ckpt/models_2023/Transfuser_newweights/TransFuserAllTownsNoZeroNoSyncZGSeed1
-export DEBUG_CHALLENGE=0
+export DEBUG_CHALLENGE=1 # for showing wp
 export RESUME=1
 export DATAGEN=0
 export PORT=2000
@@ -35,7 +36,8 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Loop for changing noise (if required, you can modify NOISE loop logic)
-for NOISE in $(seq 0.0 0.1 1.0) # increment by 0.1 up to 1.0
+for NOISE in $(seq 0.0 0.1 0.0) # increment by 0.1 up to 1.0
+# for NOISE in [0.2 0. 1.0] # increment by 0.1 up to 1.0
 do
     export NOISE
     
@@ -53,7 +55,8 @@ do
         # Count how many times this specific configuration has been run today
         COUNT=1
         SAVE_FOLDER="/media/haoming/970EVO/pharuj/cdc_eval/"
-        SAVE_PATTERN="${SAVE_FOLDER}${DATE}-${TEAM_AGENT_NAME}-${NOISE}-${ROUTES_NAME}-"
+        # SAVE_PATTERN="${SAVE_FOLDER}${DATE}-${TEAM_AGENT_NAME}-${NOISE}-${ROUTES_NAME}-"
+        SAVE_PATTERN="${SAVE_FOLDER}${DATE}-test_wp-"
         while [ -d "${SAVE_PATTERN}${COUNT}" ]; do
             COUNT=$((COUNT + 1))
         done

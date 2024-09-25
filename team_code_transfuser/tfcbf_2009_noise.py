@@ -30,10 +30,11 @@ SAVE_PATH = os.environ.get('SAVE_PATH')
 # get noise level
 NOISE = float(os.environ.get('NOISE')) # to run stepb -> d_std
 
-if not SAVE_PATH:
-    SAVE_PATH = None
-else:
-    pathlib.Path(SAVE_PATH).mkdir(parents=True, exist_ok=True)
+# NOTE: save path
+# if not SAVE_PATH:
+#     SAVE_PATH = None
+# else:
+#     pathlib.Path(SAVE_PATH).mkdir(parents=True, exist_ok=True)
 
 def get_entry_point():
     return 'HybridAgent'
@@ -287,7 +288,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         lidar_temp = input_data['lidar'][1][:, :2]
         
         # save lidar into folder
-        np.save(os.path.join(SAVE_PATH, 'lidar_'+str(self.step)+'.npy'), input_data['lidar'][1])
+        # np.save(os.path.join(SAVE_PATH, 'lidar_'+str(self.step)+'.npy'), input_data['lidar'][1])
         # print('shape:', lidar_temp.shape)
         print(self.step)
         
