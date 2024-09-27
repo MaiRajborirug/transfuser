@@ -129,8 +129,9 @@ class agent(HybridAgent):
         # self.no_certification_required = np.full((self.camera_height, self.camera_width), True)
         # self.certification_offset = np.full((self.camera_height, self.camera_width), -1000000)
 
-        # NOTE: define safety certificate solver
-        self.alg1_solver = Algorithm1(self.focal_len, (self.camera_width, self.camera_height), self.X, self.Y, self.certification_offset)
+        # NOTE: define safety certificate solver edit 09/27 add path here
+        self.cuda_path = '/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_objavoid.cu' # obstacle avoidance path
+        self.alg1_solver = Algorithm1(self.focal_len, (self.camera_width, self.camera_height), self.X, self.Y, self.certification_offset, self.cuda_path)
         
         self.alg2_solver = Algorithm2()
         self.last_w_e = 0  # angular velocity in z-axis

@@ -16,11 +16,7 @@ from memory_profiler import profile
 
 pycuda.tools.get_default_device(0)  # initialize cuda device
 # project_root = '/home/haoming/git/transfuser'
-# cuda_source_code = Path(project_root + '/team_code_transfuser/alg1_pycuda_copy.cu').read_text()
-cuda_source_code = Path('/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_objavoid.cu').read_text()
 
-# cuda_source_code = Path('alg1_pycuda_copy.cu').read_text()
-kernel = SourceModule(cuda_source_code)
 
 """
 :param f: focal length
@@ -29,7 +25,14 @@ kernel = SourceModule(cuda_source_code)
 :param certification_offset: the original offset used to certify the pixels
 """
 class Algorithm1:
-    def __init__(self, f, camera_intrinsics, X, Y, certification_offset):
+    def __init__(self, f, camera_intrinsics, X, Y, certification_offset, cuda_path):
+        # cuda_source_code = Path(project_root + '/team_code_transfuser/alg1_pycuda_copy.cu').read_text()
+        cuda_source_code = Path(cuda_path).read_text()
+
+        # cuda_source_code = Path('alg1_pycuda_copy.cu').read_text()
+        kernel = SourceModule(cuda_source_code)
+        
+        
         # unpack vehicle constants
         self.f = np.float32(f)
         self.camera_width, self.camera_height = camera_intrinsics
