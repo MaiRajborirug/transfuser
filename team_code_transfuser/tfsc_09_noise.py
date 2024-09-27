@@ -26,7 +26,7 @@ from optical_flow import optical_flow
 from rgb_seg import UNet, Unetpad, group_segment
 
 
-from alg1_pr_objavoid import Algorithm1 #
+from alg1_pr import Algorithm1 #
 from alg2 import Algorithm2
 from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
 # NOTE: adjust submission_agent
@@ -135,6 +135,12 @@ class agent(HybridAgent):
         
         self.alg2_solver = Algorithm2()
         self.last_w_e = 0  # angular velocity in z-axis
+        
+        self.cuda_path_follow = '/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_tarfollow.cu' # obstacle avoidance path
+        self.alg1_solver_follow = Algorithm1(self.focal_len, (self.camera_width, self.camera_height), self.X, self.Y, self.certification_offset, self.cuda_path_follow)
+        
+        self.alg2_solver_follow = Algorithm2()
+        
         
         # NOTE: for cruise controller
         self.cruise_controller = PIDController(K_P=0.25, K_I=0.5, K_D=0.2, n=20)
@@ -261,12 +267,12 @@ class agent(HybridAgent):
         control_steering_rate = (control_steer_normalized - self.w_e) / self.delta_time # current angular accelaration in z-axis
         steering_limit = v_e/self.turning_radius
         
-        # NOTE: target following------------
+
+
         
         
         
         # NOTE: obstacle avoidance----------
-
         self.alg2_solver.phi_bounds = ((-steering_limit-self.w_e)/self.delta_time,(steering_limit-self.w_e)/self.delta_time)        
         self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
         self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
@@ -276,297 +282,401 @@ class agent(HybridAgent):
         if self.nominal_pixel_is_certifieds.sum() / self.nominal_pixel_is_certifieds.size > self.certify_threshold:
             delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
             _ = self.throttle_controller.step(delta)
-            cv2.waitKey(1)
-            return control
+
         
-        nominal_control = (control_acc, control_steering_rate)
-        print("nominal control action: {:.3%}, {:.3%}".format(control_acc, control_steering_rate))
-        
-        def certify_control_action(control_action):
-            a_e, phi_e = control_action
-            # print("certifying:", a_e, phi_e)
-            pixel_is_certifieds, _ = self.alg1_solver.run((mu, nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
-
-
-            # if (v_e > -0.001 and v_e < 0.001):
-            #     print("certified due to being stationary")
-            #     return True
-
-            # the pixel is automatically certified if it is 
-            # the road (in other words, not obstacle)
-            pixel_is_certifieds = np.logical_or(is_road, pixel_is_certifieds)
-
-            # we only want to check certification for those regions we care about
-            pixel_is_certifieds = np.logical_or(pixel_is_certifieds, self.no_certification_required)
-
-            # print("is certified: ", pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold)
-            # cv_img2 = np.repeat(pixel_is_certifieds[:, :, np.newaxis].astype(np.uint8) * 255, 3, axis=2)
-            # cv2.putText(cv_img2, step_text, position, font, font_scale, color, thickness)
-            # cv2.imshow("certified, post mask", cv_img2)
-        
-            
-            # return pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold
-            return pixel_is_certifieds.sum() / pixel_is_certifieds.size
-    
-        res = self.alg2_solver.run(nominal_control, certify_control_action)
-
-        if res is None:
-            cv2.waitKey(1)
-            return control
         else:
-            # (a_control, phi_control) = res     
-            (a_control, phi_control) = res
-            # print("certified control action: ", a_control, phi_control)
-
-            # NOTE: map (a, phi) back to carla control (throttle, steering, break)
-            if abs(a_control) < 2 * abs(phi_control) * self.turning_radius: # prioritize turning arbitary comparison
-                # print('sc case 1')
-                # throttle mapping
-                a_control = control_acc # before SC 2              
-                delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-                throttle = self.throttle_controller.step(delta)
-                throttle = np.clip(throttle+0.15, 0.0, 0.75)
-                # throttle = np.maximum(control.throttle /2, 0.25)
-                brake = 0
-                
-                # steer mapping
-                desire_w = self.w_e + self.delta_time * phi_control
-                # print('change in phi', self.delta_time * phi_control)
-                steer = self._calculate_steer(v_e, desire_w)
+            nominal_control = (control_acc, control_steering_rate)
+            print("nominal control action: {:.3%}, {:.3%}".format(control_acc, control_steering_rate))
             
-            elif a_control > -0.2: # prioritize throttle
-                # print('sc case 2')
-                # throttle mapping           
-                delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-                throttle = self.throttle_controller.step(delta)
-                throttle = np.clip(throttle, 0.0, 0.75)
-                brake = 0
-                
-                # steer mapping
-                desire_w = self.w_e + self.delta_time * phi_control
-                # print('change in phi', self.delta_time * phi_control)
-                steer = self._calculate_steer(v_e, desire_w)
+            def certify_control_action(control_action):
+                a_e, phi_e = control_action
+                # print("certifying:", a_e, phi_e)
+                pixel_is_certifieds, _ = self.alg1_solver.run((mu, nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
 
-            else:
-                # print('sc case 3')
-                throttle = 0
-                brake = 1
-                steer = 0
 
-            control.steer = steer
-            control.throttle = np.minimum(throttle, control.throttle)
-            control.brake = np.maximum(brake, control.brake)
-            print('new control: throttle: {:.2%}, brake: {}, steer: {:.3%}'.format(control.throttle, control.brake, control.steer))
+                # if (v_e > -0.001 and v_e < 0.001):
+                #     print("certified due to being stationary")
+                #     return True
+
+                # the pixel is automatically certified if it is 
+                # the road (in other words, not obstacle)
+                pixel_is_certifieds = np.logical_or(is_road, pixel_is_certifieds)
+
+                # we only want to check certification for those regions we care about
+                pixel_is_certifieds = np.logical_or(pixel_is_certifieds, self.no_certification_required)
+
+                # print("is certified: ", pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold)
+                # cv_img2 = np.repeat(pixel_is_certifieds[:, :, np.newaxis].astype(np.uint8) * 255, 3, axis=2)
+                # cv2.putText(cv_img2, step_text, position, font, font_scale, color, thickness)
+                # cv2.imshow("certified, post mask", cv_img2)
             
-            self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
-            # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
-            self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
-            self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels
-            # self.resize_visualize(pixel_is_certifieds , 'corrected certified pixels', cert=False)
-            self.resize_visualize(self.nominal_pixel_is_certifieds, 'corrected certified pixels', cert=False)
+                
+                # return pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold
+                return pixel_is_certifieds.sum() / pixel_is_certifieds.size
         
-            cv2.waitKey(1)
-            return control
+            res = self.alg2_solver.run(nominal_control, certify_control_action)
+
+            if res is not None:
+                # (a_control, phi_control) = res     
+                (a_control, phi_control) = res
+                # print("certified control action: ", a_control, phi_control)
+
+                # NOTE: map (a, phi) back to carla control (throttle, steering, break)
+                if abs(a_control) < 2 * abs(phi_control) * self.turning_radius: # prioritize turning arbitary comparison
+                    # print('sc case 1')
+                    # throttle mapping
+                    a_control = control_acc # before SC 2              
+                    delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+                    throttle = self.throttle_controller.step(delta)
+                    throttle = np.clip(throttle+0.15, 0.0, 0.75)
+                    # throttle = np.maximum(control.throttle /2, 0.25)
+                    brake = 0
+                    
+                    # steer mapping
+                    desire_w = self.w_e + self.delta_time * phi_control
+                    # print('change in phi', self.delta_time * phi_control)
+                    steer = self._calculate_steer(v_e, desire_w)
+                
+                elif a_control > -0.2: # prioritize throttle
+                    # print('sc case 2')
+                    # throttle mapping           
+                    delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+                    throttle = self.throttle_controller.step(delta)
+                    throttle = np.clip(throttle, 0.0, 0.75)
+                    brake = 0
+                    
+                    # steer mapping
+                    desire_w = self.w_e + self.delta_time * phi_control
+                    # print('change in phi', self.delta_time * phi_control)
+                    steer = self._calculate_steer(v_e, desire_w)
+
+                else:
+                    # print('sc case 3')
+                    throttle = 0
+                    brake = 1
+                    steer = 0
+
+                control.steer = steer
+                control.throttle = np.minimum(throttle, control.throttle)
+                control.brake = np.maximum(brake, control.brake)
+                print('new control: throttle: {:.2%}, brake: {}, steer: {:.3%}'.format(control.throttle, control.brake, control.steer))
+                
+                self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
+                # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
+                self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
+                self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels
+                # self.resize_visualize(pixel_is_certifieds , 'corrected certified pixels', cert=False)
+                self.resize_visualize(self.nominal_pixel_is_certifieds, 'corrected certified pixels', cert=False)
+            
+                cv2.waitKey(1)
+                return control # --> return obj avoidance control
         
+        
+        
+        
+        # NOTE: target following -----
+        self.alg2_solver_follow.phi_bounds = ((-steering_limit-self.w_e)/self.delta_time,(steering_limit-self.w_e)/self.delta_time)        
+        self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((mu,nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
+        self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
+        self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels        
+        self.resize_visualize(self.nominal_pixel_is_certifieds, 'white = certified pixels')
+        
+        if self.nominal_pixel_is_certifieds.sum() / self.nominal_pixel_is_certifieds.size > self.certify_threshold:
+            delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+            _ = self.throttle_controller.step(delta)
+
+        
+        else:
+            nominal_control = (control_acc, control_steering_rate)
+            print("nominal control action: {:.3%}, {:.3%}".format(control_acc, control_steering_rate))
+            
+            def certify_control_action(control_action):
+                a_e, phi_e = control_action
+                # print("certifying:", a_e, phi_e)
+                pixel_is_certifieds, _ = self.alg1_solver_follow.run((mu, nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
+
+
+                # if (v_e > -0.001 and v_e < 0.001):
+                #     print("certified due to being stationary")
+                #     return True
+
+                # the pixel is automatically certified if it is 
+                # the road (in other words, not obstacle)
+                pixel_is_certifieds = np.logical_or(is_road, pixel_is_certifieds)
+
+                # we only want to check certification for those regions we care about
+                pixel_is_certifieds = np.logical_or(pixel_is_certifieds, self.no_certification_required)
+
+                # print("is certified: ", pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold)
+                # cv_img2 = np.repeat(pixel_is_certifieds[:, :, np.newaxis].astype(np.uint8) * 255, 3, axis=2)
+                # cv2.putText(cv_img2, step_text, position, font, font_scale, color, thickness)
+                # cv2.imshow("certified, post mask", cv_img2)
+            
+                
+                # return pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold
+                return pixel_is_certifieds.sum() / pixel_is_certifieds.size
+        
+            res = self.alg2_solver_follow.run(nominal_control, certify_control_action)
+
+            if res is not None:
+                # (a_control, phi_control) = res     
+                (a_control, phi_control) = res
+                # print("certified control action: ", a_control, phi_control)
+
+                # NOTE: map (a, phi) back to carla control (throttle, steering, break)
+                if abs(a_control) < 2 * abs(phi_control) * self.turning_radius: # prioritize turning arbitary comparison
+                    # print('sc case 1')
+                    # throttle mapping
+                    a_control = control_acc # before SC 2              
+                    delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+                    throttle = self.throttle_controller.step(delta)
+                    throttle = np.clip(throttle+0.15, 0.0, 0.75)
+                    # throttle = np.maximum(control.throttle /2, 0.25)
+                    brake = 0
+                    
+                    # steer mapping
+                    desire_w = self.w_e + self.delta_time * phi_control
+                    # print('change in phi', self.delta_time * phi_control)
+                    steer = self._calculate_steer(v_e, desire_w)
+                
+                elif a_control > -0.2: # prioritize throttle
+                    # print('sc case 2')
+                    # throttle mapping           
+                    delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+                    throttle = self.throttle_controller.step(delta)
+                    throttle = np.clip(throttle, 0.0, 0.75)
+                    brake = 0
+                    
+                    # steer mapping
+                    desire_w = self.w_e + self.delta_time * phi_control
+                    # print('change in phi', self.delta_time * phi_control)
+                    steer = self._calculate_steer(v_e, desire_w)
+
+                else:
+                    # print('sc case 3')
+                    throttle = 0
+                    brake = 1
+                    steer = 0
+
+                control.steer = steer
+                control.throttle = np.minimum(throttle, control.throttle)
+                control.brake = np.maximum(brake, control.brake)
+                print('new control: throttle: {:.2%}, brake: {}, steer: {:.3%}'.format(control.throttle, control.brake, control.steer))
+                
+                self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((mu,nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
+                # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((mu,nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
+                self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
+                self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels
+                # self.resize_visualize(pixel_is_certifieds , 'corrected certified pixels', cert=False)
+                self.resize_visualize(self.nominal_pixel_is_certifieds, 'corrected certified pixels', cert=False)
+            
+                cv2.waitKey(1)
+                return control # --> return obj avoidance control
+        
+        
+        
+        
+        
+        cv2.waitKey(1)
         return control
-#---------------------------------#
-    #@profile
-    def run_step_(self, input_data, timestamp):
-        """
-        input_data: A dictionary containing sensor data for the requested sensors.
-        The data has been preprocessed at sensor_interface.py, and will be given
-        as numpy arrays. This dictionary is indexed by the ids defined in 
-        sensor method.
+# #---------------------------------#
+#     #@profile
+#     def run_step_(self, input_data, timestamp):
+#         """
+#         input_data: A dictionary containing sensor data for the requested sensors.
+#         The data has been preprocessed at sensor_interface.py, and will be given
+#         as numpy arrays. This dictionary is indexed by the ids defined in 
+#         sensor method.
 
-        timestamp: A timestamp of the current simulation instant.
+#         timestamp: A timestamp of the current simulation instant.
 
-        returns: control 
-        see https://carla.readthedocs.io/en/latest/python_api/#carlavehiclecontrol
-        """
-        control = super().run_step(input_data, timestamp)
+#         returns: control 
+#         see https://carla.readthedocs.io/en/latest/python_api/#carlavehiclecontrol
+#         """
+#         control = super().run_step(input_data, timestamp)
 
-        delta_time = CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
-        self._step += 1
+#         delta_time = CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
+#         self._step += 1
         
-        print("transfuser raw throttle: {:.2%}, brake: {}, steer: {:.3%}".format(control.throttle, control.brake, control.steer))
+#         print("transfuser raw throttle: {:.2%}, brake: {}, steer: {:.3%}".format(control.throttle, control.brake, control.steer))
         
-        # NOTE: optical flow output
-        self.bgr_ = input_data["rgb_front"][1][:, :, :3]  # rgb to rgb_front
-        self.optical_flow_output = self.optical_flow.predict(self.bgr_, self.delta_time) 
+#         # NOTE: optical flow output
+#         self.bgr_ = input_data["rgb_front"][1][:, :, :3]  # rgb to rgb_front
+#         self.optical_flow_output = self.optical_flow.predict(self.bgr_, self.delta_time) 
         
         
-        # NOTE: segmentation output -> replace with GT segmentation
-        # rgb_pil = Image.fromarray(cv2.cvtColor(self.bgr_.astype('uint8'), cv2.COLOR_BGR2RGB))
-        # rgb_pil = self.transform(rgb_pil)
-        # rgb_pil = rgb_pil.unsqueeze(0)  # Add batch dimension # (3, 256, 256) -> (1, 3, 256, 256)
-        # pred_mask = self.segment_model(rgb_pil.to(self.device))  # Pass the image to the model
-        # pred_mask = torch.argmax(pred_mask, dim=1)[0].cpu().numpy()  # Assuming channel is at dim=1
-        # pred_mask = cv2.resize(pred_mask, (960, 480), interpolation=cv2.INTER_NEAREST)
+#         # NOTE: segmentation output -> replace with GT segmentation
+#         # rgb_pil = Image.fromarray(cv2.cvtColor(self.bgr_.astype('uint8'), cv2.COLOR_BGR2RGB))
+#         # rgb_pil = self.transform(rgb_pil)
+#         # rgb_pil = rgb_pil.unsqueeze(0)  # Add batch dimension # (3, 256, 256) -> (1, 3, 256, 256)
+#         # pred_mask = self.segment_model(rgb_pil.to(self.device))  # Pass the image to the model
+#         # pred_mask = torch.argmax(pred_mask, dim=1)[0].cpu().numpy()  # Assuming channel is at dim=1
+#         # pred_mask = cv2.resize(pred_mask, (960, 480), interpolation=cv2.INTER_NEAREST)
         
-        # NOTE: gt segmentation
-        semantic_front = input_data["semantics_front"][1][:, :, 2] # semantic to semantic_front
-        pred_mask = self._distort(semantic_front, value=5, n_labels=24)
+#         # NOTE: gt segmentation
+#         semantic_front = input_data["semantics_front"][1][:, :, 2] # semantic to semantic_front
+#         pred_mask = self._distort(semantic_front, value=5, n_labels=24)
         
-        # NOTE: CARLA segmentation, initialize gt segmentation # edit 09/27 add 
-        is_road, is_nonanimated, is_terrain, is_animated, group_label = group_segment(pred_mask)
-        self.resize_visualize(group_label, 'segment label', binary_input=False)
+#         # NOTE: CARLA segmentation, initialize gt segmentation # edit 09/27 add 
+#         is_road, is_nonanimated, is_terrain, is_animated, group_label = group_segment(pred_mask)
+#         self.resize_visualize(group_label, 'segment label', binary_input=False)
         
-        # NOTE: monodepth2 estimation
-        self.resize_visualize(self.bgr_, 'input', binary_input=False)  # NOTE: debug attempt
-        input_image = Image.fromarray(cv2.cvtColor(self.bgr_, cv2.COLOR_BGR2RGB)).convert('RGB')
-        original_width, original_height = input_image.size
-        input_image_resized = input_image.resize((self.feed_width, self.feed_height), Image.LANCZOS)
-        input_image_pytorch = transforms.ToTensor()(input_image_resized).unsqueeze(0)
-        with torch.no_grad():
-            features = self.encoder(input_image_pytorch)
-            outputs = self.depth_decoder(features)
+#         # NOTE: monodepth2 estimation
+#         self.resize_visualize(self.bgr_, 'input', binary_input=False)  # NOTE: debug attempt
+#         input_image = Image.fromarray(cv2.cvtColor(self.bgr_, cv2.COLOR_BGR2RGB)).convert('RGB')
+#         original_width, original_height = input_image.size
+#         input_image_resized = input_image.resize((self.feed_width, self.feed_height), Image.LANCZOS)
+#         input_image_pytorch = transforms.ToTensor()(input_image_resized).unsqueeze(0)
+#         with torch.no_grad():
+#             features = self.encoder(input_image_pytorch)
+#             outputs = self.depth_decoder(features)
 
-        disp = outputs[("disp", 0)]
+#         disp = outputs[("disp", 0)]
         
-        arr = disp.squeeze().detach().cpu().numpy()
-        # cv2.imshow("distance", arr)
-        disp_resized = torch.nn.functional.interpolate(disp,
-                                                       (original_height, original_width), mode="bilinear", align_corners=False)
-        disp_resized_np = disp_resized.squeeze().cpu().numpy()
-        distance = self.disp_k / disp_resized_np
-        d_upper = distance * np.exp(self.d_std)
-        d_lower = distance * np.exp(-self.d_std)
+#         arr = disp.squeeze().detach().cpu().numpy()
+#         # cv2.imshow("distance", arr)
+#         disp_resized = torch.nn.functional.interpolate(disp,
+#                                                        (original_height, original_width), mode="bilinear", align_corners=False)
+#         disp_resized_np = disp_resized.squeeze().cpu().numpy()
+#         distance = self.disp_k / disp_resized_np
+#         d_upper = distance * np.exp(self.d_std)
+#         d_lower = distance * np.exp(-self.d_std)
         
-        # NOTE: for certificate and control mapping
-        v_e = np.maximum(0,input_data["speed"][1]["speed"]) # speedometer in vehicle direction (m/s)
-        self.w_e = input_data['imu'][1][5] # angular vel in z-axis (rad/s)
-        a_e = input_data["imu"][1][0] # accelaration in vehicle direction (m/s^2)
-        control_acc = a_e
+#         # NOTE: for certificate and control mapping
+#         v_e = np.maximum(0,input_data["speed"][1]["speed"]) # speedometer in vehicle direction (m/s)
+#         self.w_e = input_data['imu'][1][5] # angular vel in z-axis (rad/s)
+#         a_e = input_data["imu"][1][0] # accelaration in vehicle direction (m/s^2)
+#         control_acc = a_e
         
-        if self._step == 0:
-            self.phi_e = 0 # angular acceleration in z-axis (rad/s^2)
-            self.last_w_e = self.w_e 
-        else:
-            self.phi_e = (self.w_e - self.last_w_e) / self.delta_time
-            self.last_w_e = self.w_e
+#         if self._step == 0:
+#             self.phi_e = 0 # angular acceleration in z-axis (rad/s^2)
+#             self.last_w_e = self.w_e 
+#         else:
+#             self.phi_e = (self.w_e - self.last_w_e) / self.delta_time
+#             self.last_w_e = self.w_e
         
-        if v_e < 0.2 and control.brake > 0:
-            delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-            _ = self.throttle_controller.step(delta)
-            cv2.waitKey(1)
-            return control
+#         if v_e < 0.2 and control.brake > 0:
+#             delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+#             _ = self.throttle_controller.step(delta)
+#             cv2.waitKey(1)
+#             return control
         
-        # convert optical flow to mu and nu
-        mu = self.optical_flow_output[:, :, 0]
-        nu = self.optical_flow_output[:, :, 1]
-        mu = mu.astype(np.float32)
-        nu = nu.astype(np.float32)
+#         # convert optical flow to mu and nu
+#         mu = self.optical_flow_output[:, :, 0]
+#         nu = self.optical_flow_output[:, :, 1]
+#         mu = mu.astype(np.float32)
+#         nu = nu.astype(np.float32)
                 
-        # find angular acceleration
-        if abs(control.steer) > 0.05: # desensitize the value
-            turning_radius = (self.agent_backwhl2cm**2 + self.agent_front2back_whl**2*abs(1/math.tan(control.steer)))
-        else:
-            turning_radius = np.inf
+#         # find angular acceleration
+#         if abs(control.steer) > 0.05: # desensitize the value
+#             turning_radius = (self.agent_backwhl2cm**2 + self.agent_front2back_whl**2*abs(1/math.tan(control.steer)))
+#         else:
+#             turning_radius = np.inf
 
-        control_steer_normalized = control.steer * v_e/turning_radius # desire angular velocity
-        control_steering_rate = (control_steer_normalized - self.w_e) / self.delta_time # current angular accelaration in z-axis
+#         control_steer_normalized = control.steer * v_e/turning_radius # desire angular velocity
+#         control_steering_rate = (control_steer_normalized - self.w_e) / self.delta_time # current angular accelaration in z-axis
 
-        steering_limit = v_e/self.turning_radius
-        self.alg2_solver.phi_bounds = ((-steering_limit-self.w_e)/self.delta_time,(steering_limit-self.w_e)/self.delta_time)        
-        self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
-        self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
-        self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels        
-        self.resize_visualize(self.nominal_pixel_is_certifieds, 'white = certified pixels')
+#         steering_limit = v_e/self.turning_radius
+#         self.alg2_solver.phi_bounds = ((-steering_limit-self.w_e)/self.delta_time,(steering_limit-self.w_e)/self.delta_time)        
+#         self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
+#         self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
+#         self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels        
+#         self.resize_visualize(self.nominal_pixel_is_certifieds, 'white = certified pixels')
         
-        if self.nominal_pixel_is_certifieds.sum() / self.nominal_pixel_is_certifieds.size > self.certify_threshold:
-            delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-            _ = self.throttle_controller.step(delta)
-            cv2.waitKey(1)
-            return control
+#         if self.nominal_pixel_is_certifieds.sum() / self.nominal_pixel_is_certifieds.size > self.certify_threshold:
+#             delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+#             _ = self.throttle_controller.step(delta)
+#             cv2.waitKey(1)
+#             return control
         
-        nominal_control = (control_acc, control_steering_rate)
-        print("nominal control action: {:.3%}, {:.3%}".format(control_acc, control_steering_rate))
+#         nominal_control = (control_acc, control_steering_rate)
+#         print("nominal control action: {:.3%}, {:.3%}".format(control_acc, control_steering_rate))
         
-        def certify_control_action(control_action):
-            a_e, phi_e = control_action
-            # print("certifying:", a_e, phi_e)
-            pixel_is_certifieds, _ = self.alg1_solver.run((mu, nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
+#         def certify_control_action(control_action):
+#             a_e, phi_e = control_action
+#             # print("certifying:", a_e, phi_e)
+#             pixel_is_certifieds, _ = self.alg1_solver.run((mu, nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
 
 
-            # if (v_e > -0.001 and v_e < 0.001):
-            #     print("certified due to being stationary")
-            #     return True
+#             # if (v_e > -0.001 and v_e < 0.001):
+#             #     print("certified due to being stationary")
+#             #     return True
 
-            # the pixel is automatically certified if it is 
-            # the road (in other words, not obstacle)
-            pixel_is_certifieds = np.logical_or(is_road, pixel_is_certifieds)
+#             # the pixel is automatically certified if it is 
+#             # the road (in other words, not obstacle)
+#             pixel_is_certifieds = np.logical_or(is_road, pixel_is_certifieds)
 
-            # we only want to check certification for those regions we care about
-            pixel_is_certifieds = np.logical_or(pixel_is_certifieds, self.no_certification_required)
+#             # we only want to check certification for those regions we care about
+#             pixel_is_certifieds = np.logical_or(pixel_is_certifieds, self.no_certification_required)
 
-            # print("is certified: ", pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold)
-            # cv_img2 = np.repeat(pixel_is_certifieds[:, :, np.newaxis].astype(np.uint8) * 255, 3, axis=2)
-            # cv2.putText(cv_img2, step_text, position, font, font_scale, color, thickness)
-            # cv2.imshow("certified, post mask", cv_img2)
+#             # print("is certified: ", pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold)
+#             # cv_img2 = np.repeat(pixel_is_certifieds[:, :, np.newaxis].astype(np.uint8) * 255, 3, axis=2)
+#             # cv2.putText(cv_img2, step_text, position, font, font_scale, color, thickness)
+#             # cv2.imshow("certified, post mask", cv_img2)
         
             
-            # return pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold
-            return pixel_is_certifieds.sum() / pixel_is_certifieds.size
+#             # return pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold
+#             return pixel_is_certifieds.sum() / pixel_is_certifieds.size
     
-        res = self.alg2_solver.run(nominal_control, certify_control_action)
+#         res = self.alg2_solver.run(nominal_control, certify_control_action)
 
-        if res is None:
-            cv2.waitKey(1)
-            return control
-        else:
-            # (a_control, phi_control) = res     
-            (a_control, phi_control) = res
-            # print("certified control action: ", a_control, phi_control)
+#         if res is None:
+#             cv2.waitKey(1)
+#             return control
+#         else:
+#             # (a_control, phi_control) = res     
+#             (a_control, phi_control) = res
+#             # print("certified control action: ", a_control, phi_control)
 
-            # NOTE: map (a, phi) back to carla control (throttle, steering, break)
-            if abs(a_control) < 2 * abs(phi_control) * self.turning_radius: # prioritize turning arbitary comparison
-                # print('sc case 1')
-                # throttle mapping
-                a_control = control_acc # before SC 2              
-                delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-                throttle = self.throttle_controller.step(delta)
-                throttle = np.clip(throttle+0.15, 0.0, 0.75)
-                # throttle = np.maximum(control.throttle /2, 0.25)
-                brake = 0
+#             # NOTE: map (a, phi) back to carla control (throttle, steering, break)
+#             if abs(a_control) < 2 * abs(phi_control) * self.turning_radius: # prioritize turning arbitary comparison
+#                 # print('sc case 1')
+#                 # throttle mapping
+#                 a_control = control_acc # before SC 2              
+#                 delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+#                 throttle = self.throttle_controller.step(delta)
+#                 throttle = np.clip(throttle+0.15, 0.0, 0.75)
+#                 # throttle = np.maximum(control.throttle /2, 0.25)
+#                 brake = 0
                 
-                # steer mapping
-                desire_w = self.w_e + self.delta_time * phi_control
-                # print('change in phi', self.delta_time * phi_control)
-                steer = self._calculate_steer(v_e, desire_w)
+#                 # steer mapping
+#                 desire_w = self.w_e + self.delta_time * phi_control
+#                 # print('change in phi', self.delta_time * phi_control)
+#                 steer = self._calculate_steer(v_e, desire_w)
             
-            elif a_control > -0.2: # prioritize throttle
-                # print('sc case 2')
-                # throttle mapping           
-                delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-                throttle = self.throttle_controller.step(delta)
-                throttle = np.clip(throttle, 0.0, 0.75)
-                brake = 0
+#             elif a_control > -0.2: # prioritize throttle
+#                 # print('sc case 2')
+#                 # throttle mapping           
+#                 delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+#                 throttle = self.throttle_controller.step(delta)
+#                 throttle = np.clip(throttle, 0.0, 0.75)
+#                 brake = 0
                 
-                # steer mapping
-                desire_w = self.w_e + self.delta_time * phi_control
-                # print('change in phi', self.delta_time * phi_control)
-                steer = self._calculate_steer(v_e, desire_w)
+#                 # steer mapping
+#                 desire_w = self.w_e + self.delta_time * phi_control
+#                 # print('change in phi', self.delta_time * phi_control)
+#                 steer = self._calculate_steer(v_e, desire_w)
 
-            else:
-                # print('sc case 3')
-                throttle = 0
-                brake = 1
-                steer = 0
+#             else:
+#                 # print('sc case 3')
+#                 throttle = 0
+#                 brake = 1
+#                 steer = 0
 
-            control.steer = steer
-            control.throttle = np.minimum(throttle, control.throttle)
-            control.brake = np.maximum(brake, control.brake)
-            print('new control: throttle: {:.2%}, brake: {}, steer: {:.3%}'.format(control.throttle, control.brake, control.steer))
+#             control.steer = steer
+#             control.throttle = np.minimum(throttle, control.throttle)
+#             control.brake = np.maximum(brake, control.brake)
+#             print('new control: throttle: {:.2%}, brake: {}, steer: {:.3%}'.format(control.throttle, control.brake, control.steer))
             
-            self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
-            # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
-            self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
-            self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels
-            # self.resize_visualize(pixel_is_certifieds , 'corrected certified pixels', cert=False)
-            self.resize_visualize(self.nominal_pixel_is_certifieds, 'corrected certified pixels', cert=False)
+#             self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
+#             # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
+#             self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
+#             self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels
+#             # self.resize_visualize(pixel_is_certifieds , 'corrected certified pixels', cert=False)
+#             self.resize_visualize(self.nominal_pixel_is_certifieds, 'corrected certified pixels', cert=False)
         
-            cv2.waitKey(1)
-            return control
+#             cv2.waitKey(1)
+#             return control
 
     def destroy(self):
         super().destroy()

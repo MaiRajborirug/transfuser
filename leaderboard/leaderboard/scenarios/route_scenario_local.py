@@ -280,7 +280,7 @@ class RouteScenario(BasicScenario):
         for idx, w in enumerate(waypoints):
             wp = w[0].location + carla.Location(z=vertical_shift)
 
-            size = 0.05 # 0.2 # work
+            size = 0.15 # 0.2 # work
             if w[1] == RoadOption.LEFT:  # Yellow
                 color = carla.Color(255, 255, 0)
             elif w[1] == RoadOption.RIGHT:  # Cyan
