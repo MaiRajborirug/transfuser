@@ -10,7 +10,7 @@
 #define PSI_I_MAX 0.1f
 
 // radius to keep obstacles out of, in meters
-#define R 2.0f
+#define R 0.0f
 
 // height threshold for obstacle avoidance
 // this is down positive, origin at camera location

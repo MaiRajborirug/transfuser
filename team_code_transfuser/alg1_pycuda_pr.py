@@ -36,8 +36,8 @@ class Algorithm1:
         self.X, self.Y = np.float32(X), np.float32(Y)
         self.certification_offset = np.float32(certification_offset)
 
-        # define number of steps when doing grid search
-        self.gridsearchsize = 50
+        # define number of steps when doing grid search best object angle theta
+        self.gridsearchsize = 50 # 
 
         # number of pixels
         self.N_pixels = X.size
