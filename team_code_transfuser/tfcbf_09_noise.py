@@ -31,10 +31,10 @@ SAVE_PATH = os.environ.get('SAVE_PATH')
 NOISE = float(os.environ.get('NOISE')) # to run stepb -> d_std
 
 # NOTE: save path
-# if not SAVE_PATH:
-#     SAVE_PATH = None
-# else:
-#     pathlib.Path(SAVE_PATH).mkdir(parents=True, exist_ok=True)
+if not SAVE_PATH:
+    SAVE_PATH = None
+else:
+    pathlib.Path(SAVE_PATH).mkdir(parents=True, exist_ok=True)
 
 def get_entry_point():
     return 'HybridAgent'
@@ -319,7 +319,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         mask_not_satisfy = mask_satisfy ==0
         
         # NOTE: visualize data
-        # self.hocbf._update_lidar_plot(lidar_data, mask_satisfy, mask_not_satisfy)
+        self.hocbf._update_lidar_plt(lidar_data, mask_satisfy, mask_not_satisfy)
         
         # pass the condition, no need to optimize
         
@@ -542,7 +542,6 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
              # # ---- Update Control ----
             print(f"Nom->CBF : a{a_e:.2f}->{a_e_opt:.2f}, th{throttle_tf:.2f}->{control.throttle:.2f}, st{steer_tf:.2f}->{control.steer:.2f}")
             print(f"Nom %->CBF%: {np.mean(self.hocbf._constraint(lidar_data, steer_tf, v_e, a_e)):.3f}->{np.mean(self.hocbf._constraint(lidar_data, control.steer, v_e, a_e_opt)):.3f}")
-            # breakpoint()
             ##----------
         else:
             print(f"Nom : a{a_e:.2f}, th{throttle_tf:.2f}, st{steer_tf:.2f}")
@@ -897,14 +896,8 @@ class HOCBF():
         """
         self.scatter = None
         self.lidar_data_prev = np.array([[100,100,100]]) # random far
-        # self.fig = plt.figure()
-        # self.ax = self.fig.add_subplot(111, projection='3d')
-        
-        # if not hasattr(self, 'fig') or self.fig is None:
-        #     self.fig = plt.figure()
-        #     self.ax = self.fig.add_subplot(111, projection='3d')
-        # else:
-        #     self.ax.clear()
+        self.fig = plt.figure()
+        self.ax = self.fig.add_subplot(111, projection='3d')
         
         
         # NOTE: for control mapping
@@ -1011,7 +1004,7 @@ class HOCBF():
         return self._h2(lidar_data, v_e, a_e, R_e) >= 0
 
     # Function to update the plot for each frame (real-time data)
-    def _update_lidar_plot(self, lidar_data, mask_satisfy, mask_not_satisfy):
+    def _update_lidar_plt(self, lidar_data, mask_satisfy, mask_not_satisfy):
         self.ax.cla()  # Clear the previous plot
 
         # Extract X, Y, Z from the point cloud

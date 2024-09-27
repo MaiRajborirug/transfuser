@@ -17,8 +17,8 @@ export REPETITIONS=1
 export CHALLENGE_TRACK_CODENAME=MAP # SENSORS, MAP
 export ROUTES=/media/haoming/970EVO/pharuj/git/transfuser/leaderboard/data/longest6/longest6_crashes2.xml
 
-# tf_2404_noise, tfcbf_2009_noise, tfsc_2404_noise
-export TEAM_AGENT=${WORK_DIR}/team_code_transfuser/tfcbf_2009_noise.py
+# tfcbf_09_noise / tf_04_noise / tfsc_04_noise / tfsc_09_noise
+export TEAM_AGENT=${WORK_DIR}/team_code_transfuser/tfsc_09_noise.py
 
 export TEAM_CONFIG=/media/haoming/970EVO/pharuj/transfuser_training/model_ckpt/models_2023/Transfuser_newweights/TransFuserAllTownsNoZeroNoSyncZGSeed1
 export DEBUG_CHALLENGE=1 # for showing wp
@@ -54,7 +54,7 @@ do
         # Count how many times this specific configuration has been run today
         COUNT=1
         SAVE_FOLDER="/media/haoming/970EVO/pharuj/cdc_eval/"
-        # SAVE_PATTERN="${SAVE_FOLDER}${DATE}-${TEAM_AGENT_NAME}_wp-${NOISE}-${ROUTES_NAME}-"
+        # SAVE_PATTERN="${SAVE_FOLDER}${DATE}-${TEAM_AGENT_NAME}-${NOISE}-wp${DEBUG_CHALLENGE}-${ROUTES_NAME}-"
         SAVE_PATTERN="${SAVE_FOLDER}${DATE}-test_wp-"
         while [ -d "${SAVE_PATTERN}${COUNT}" ]; do
             COUNT=$((COUNT + 1))

@@ -277,10 +277,10 @@ class RouteScenario(BasicScenario):
         """
         Draw a list of waypoints at a certain height given in vertical_shift.
         """
-        for w in waypoints:
+        for idx, w in enumerate(waypoints):
             wp = w[0].location + carla.Location(z=vertical_shift)
 
-            size = 0.2
+            size = 0.2 # 0.2 # work
             if w[1] == RoadOption.LEFT:  # Yellow
                 color = carla.Color(255, 255, 0)
             elif w[1] == RoadOption.RIGHT:  # Cyan
@@ -294,12 +294,21 @@ class RouteScenario(BasicScenario):
             else:  # LANEFOLLOW
                 color = carla.Color(0, 255, 0) # Green
                 size = 0.1
+            
+            # world.debug.draw_point(wp, size=size, color=color, life_time=persistency) # NOTE: issue no color changing
 
-            world.debug.draw_point(wp, size=size, color=color, life_time=persistency)
+            # world.debug.draw_line(waypoints[idx-1][0].location + carla.Location(z=vertical_shift),
+            #                     wp, thickness=0.1,
+            #                     color=carla.Color(0, 255, 255), life_time=persistency)
+            world.debug.draw_line(wp + carla.Location(z=0.01),
+                                wp, thickness=0.2,
+                                color=carla.Color(0, 255, 255), life_time=persistency)            
+            
+            
 
-        world.debug.draw_point(waypoints[0][0].location + carla.Location(z=vertical_shift), size=0.2,
+        world.debug.draw_point(waypoints[0][0].location + carla.Location(z=vertical_shift), size=size,
                                color=carla.Color(0, 0, 255), life_time=persistency)
-        world.debug.draw_point(waypoints[-1][0].location + carla.Location(z=vertical_shift), size=0.2,
+        world.debug.draw_point(waypoints[-1][0].location + carla.Location(z=vertical_shift), size=size,
                                color=carla.Color(255, 0, 0), life_time=persistency)
 
     def _scenario_sampling(self, potential_scenarios_definitions, random_seed=0):
@@ -372,6 +381,7 @@ class RouteScenario(BasicScenario):
                 world.debug.draw_point(loc, size=0.3, color=carla.Color(255, 0, 0), life_time=100000)
                 world.debug.draw_string(loc, str(scenario['name']), draw_shadow=False,
                                         color=carla.Color(0, 0, 255), life_time=100000, persistent_lines=True)
+                # pass # noeffect                
 
         for scenario_number, definition in enumerate(scenario_definitions):
             # Get the class possibilities for this scenario number
