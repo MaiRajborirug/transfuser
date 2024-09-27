@@ -198,7 +198,7 @@ class agent(HybridAgent):
         pred_mask = self._distort(semantic_front, value=5, n_labels=24)
         
         # NOTE: CARLA segmentation, initialize gt segmentation
-        is_road, is_nonanimated, is_terrain, is_animated, group_label = group_segment(pred_mask)
+        is_wp, is_road, is_nonanimated, is_terrain, is_animated, group_label = group_segment(pred_mask)
         self.resize_visualize(group_label, 'segment label', binary_input=False)
         
         # NOTE: monodepth2 estimation
@@ -426,7 +426,7 @@ class agent(HybridAgent):
         semantic_front = input_data["semantics_front"][1][:, :, 2] # semantic to semantic_front
         pred_mask = self._distort(semantic_front, value=5, n_labels=24)
         
-        # NOTE: CARLA segmentation, initialize gt segmentation
+        # NOTE: CARLA segmentation, initialize gt segmentation # edit 09/27 add is_wp
         is_road, is_nonanimated, is_terrain, is_animated, group_label = group_segment(pred_mask)
         self.resize_visualize(group_label, 'segment label', binary_input=False)
         

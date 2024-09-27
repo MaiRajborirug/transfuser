@@ -280,7 +280,7 @@ class RouteScenario(BasicScenario):
         for idx, w in enumerate(waypoints):
             wp = w[0].location + carla.Location(z=vertical_shift)
 
-            size = 0.2 # 0.2 # work
+            size = 0.1 # 0.2 # work
             if w[1] == RoadOption.LEFT:  # Yellow
                 color = carla.Color(255, 255, 0)
             elif w[1] == RoadOption.RIGHT:  # Cyan
@@ -301,7 +301,7 @@ class RouteScenario(BasicScenario):
             #                     wp, thickness=0.1,
             #                     color=carla.Color(0, 255, 255), life_time=persistency)
             world.debug.draw_line(wp + carla.Location(z=0.01),
-                                wp, thickness=0.3,
+                                wp, thickness=size,
                                 color=carla.Color(0, 255, 255), life_time=persistency)            
             
             

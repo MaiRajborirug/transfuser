@@ -200,7 +200,7 @@ def group_segment(label):
     outputs: 4 binary masks for road, non-animated, terrain, and animated objects
     """
     colormap_24 = {
-        0: (0, 0, 0),        # unlabeled
+        0: (0, 0, 0),        # unlabeled - waypoint marker
         1: (70, 70, 70),     # building
         2: (100, 40, 40),    # fence
         3: (55, 90, 80),     # other
@@ -233,22 +233,25 @@ def group_segment(label):
         'animated': (220, 20, 60),
         'terrain': (107, 142, 35),
         'non_animated': (70, 70, 70),
+        'wp': (255, 255, 0) # 0 255 255 yellow
     }
     
     # Define class indices for each category
     # NOTE: for experiment use switch animate and non animated
-    road_classes = [6, 7, 13, 14, 15, 16, 21, 22,] # Date: sept 25 add '0' (class of WP)
+    
+    # 0 3 20
+    road_classes = [0, 6, 7, 13, 14, 15, 16, 21, 22,] # Date: sept 25 add '0' (class of WP)
     animated_classes = [4, 10]
-    nonanimated_classes = [1, 2, 3, 5,8, 9, 11, 12, 17, 18, 19] # Date: sept 27 add '3' (class of WP)
+    nonanimated_classes = [1, 2, 5, 8, 9, 11, 12, 17, 18, 19, 20, 23, 24]
     terrain_classes = [9]
-    # nonanimated_classes = [4, 10]
-    # animated_classes = [1, 2, 5,8, 9, 11, 12, 17, 18, 19]
+    wp_class = [0]
     
     # Create binary masks for each category
     is_road = np.isin(label, list(road_classes)).astype(int)
     is_animated = np.isin(label, list(animated_classes)).astype(int)
     is_terrain = np.isin(label, list(terrain_classes)).astype(int)
     is_nonanimated = np.isin(label, list(nonanimated_classes)).astype(int)
+    is_wp = np.isin(label, list(wp_class)).astype(int)
     
     # Create a color group image initialized to all zeros (black)
     H, W = label.shape
@@ -256,17 +259,19 @@ def group_segment(label):
     
     # Fill the group image with colors according to the category
     for category, color in group_colors.items():
-        if category == 'road':
-            group_label[is_road == 1] = color
-        elif category == 'animated':
+
+        if category == 'animated':
             group_label[is_animated == 1] = color
         elif category == 'terrain':
             group_label[is_terrain == 1] = color
         elif category == 'non_animated':
             group_label[is_nonanimated == 1] = color
+        elif category == 'road':
+            group_label[is_road == 1] = color
+        elif category == 'wp':
+            group_label[is_wp == 1] = color
 
-    
-    return is_road, is_nonanimated, is_terrain, is_animated, group_label
+    return is_wp, is_road, is_nonanimated, is_terrain, is_animated, group_label
         
 # NOTE: test model2
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
