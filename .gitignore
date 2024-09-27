@@ -163,3 +163,4 @@ results/
 model_ckpt/
 data/
 test_code/
+*legacy.py
