@@ -176,10 +176,13 @@ class agent(HybridAgent):
         self.step +=1
         print(f"{self.step}, v:{v_e:.2f}, a:{a_e:.2f}, si:{control_signal:.2f}, th:{throttle:.2f}, brake:{brake:.2f}")
         
-        #------
+        #------ start old algorithm -----
+        delta_time = CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
+        self._step += 1
+        
         # NOTE: optical flow output
         self.bgr_ = input_data["rgb_front"][1][:, :, :3]  # rgb to rgb_front
-        self.optical_flow_output = self.optical_flow.predict(self.bgr_, self.delta_time) 
+        self.optical_flow_output = self.optical_flow.predict(self.bgr_, self.delta_time)
         
         
         # NOTE: segmentation output -> replace with GT segmentation
@@ -224,6 +227,35 @@ class agent(HybridAgent):
         self.w_e = input_data['imu'][1][5] # angular vel in z-axis (rad/s)
         a_e = input_data["imu"][1][0] # accelaration in vehicle direction (m/s^2)
         control_acc = a_e
+        
+        # NOTE: chaek if wp segmentation works -----------
+        # Define the ranges for each color channel
+        r0, r1 = 180, 255  # Example values for red channel range
+        g0, g1 = 180, 255  # Example values for green channel range
+        b0, b1 = 180, 255  # Example values for blue channel range
+
+        # Split the BGR array into its separate channels
+        b_channel = self.bgr_[:, :, 0]
+        g_channel = self.bgr_[:, :, 1]
+        r_channel = self.bgr_[:, :, 2]
+
+        # Create a boolean mask where the conditions for r, g, and b are satisfied
+        mask = (r_channel > r0) & (r_channel < r1) & (g_channel > g0) & (g_channel < g1) & (b_channel > b0) & (b_channel < b1)
+
+        # Convert the boolean mask to integers (1 for True, 0 for False)
+        self.wp_img = (mask).astype(np.uint8)
+        
+        # self.resize_visualize(self.wp_img , 'mask waypoint', binary_input=True)
+        
+        # # NOTE: check
+        # if self.step == 40:
+        #     self.bgr_ = self.bgr_[400:,500:550]
+        #     bgr_reshaped = self.bgr_.reshape(-1, self.bgr_.shape[-1])
+        #     bgr_unique = np.unique(bgr_reshaped, axis=0, return_counts=True)
+        #     print(bgr_unique)
+        #     breakpoint()
+        #------------------
+            
         
         if self._step == 0:
             self.phi_e = 0 # angular acceleration in z-axis (rad/s^2)
@@ -648,7 +680,7 @@ class agent(HybridAgent):
         new_height = int(img.shape[0] * scale)
         
         if binary_input:
-            img = np.repeat(img[:, :, np.newaxis].astype(np.uint8) * 255, 3, axis=2)
+            img = np.repeat((1-img[:, :, np.newaxis].astype(np.uint8)) * 255, 3, axis=2)
             
         new_size = (new_width, new_height)
         

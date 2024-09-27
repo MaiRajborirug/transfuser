@@ -237,9 +237,9 @@ def group_segment(label):
     
     # Define class indices for each category
     # NOTE: for experiment use switch animate and non animated
-    road_classes = [0, 6, 7, 13, 14, 15, 16, 21, 22,] # Date: sept 25 add '0' (class of WP)
+    road_classes = [6, 7, 13, 14, 15, 16, 21, 22,] # Date: sept 25 add '0' (class of WP)
     animated_classes = [4, 10]
-    nonanimated_classes = [1, 2, 5,8, 9, 11, 12, 17, 18, 19]
+    nonanimated_classes = [1, 2, 3, 5,8, 9, 11, 12, 17, 18, 19] # Date: sept 27 add '3' (class of WP)
     terrain_classes = [9]
     # nonanimated_classes = [4, 10]
     # animated_classes = [1, 2, 5,8, 9, 11, 12, 17, 18, 19]

@@ -301,7 +301,7 @@ class RouteScenario(BasicScenario):
             #                     wp, thickness=0.1,
             #                     color=carla.Color(0, 255, 255), life_time=persistency)
             world.debug.draw_line(wp + carla.Location(z=0.01),
-                                wp, thickness=0.2,
+                                wp, thickness=0.3,
                                 color=carla.Color(0, 255, 255), life_time=persistency)            
             
             
