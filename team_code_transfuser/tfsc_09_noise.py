@@ -26,7 +26,7 @@ from optical_flow import optical_flow
 from rgb_seg import UNet, Unetpad, group_segment
 
 
-from alg1_pycuda_yaguang import Algorithm1 #
+from alg1_pycuda_pr import Algorithm1 #
 from alg2 import Algorithm2
 from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
 # NOTE: adjust submission_agent

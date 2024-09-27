@@ -17,7 +17,7 @@ from memory_profiler import profile
 pycuda.tools.get_default_device(0)  # initialize cuda device
 # project_root = '/home/haoming/git/transfuser'
 # cuda_source_code = Path(project_root + '/team_code_transfuser/alg1_pycuda_copy.cu').read_text()
-cuda_source_code = Path('/media/haoming/970EVO/Yaguang/examples/alg1_yaguang.cu').read_text()
+cuda_source_code = Path('/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_2.cu').read_text()
 
 # cuda_source_code = Path('alg1_pycuda_copy.cu').read_text()
 kernel = SourceModule(cuda_source_code)
