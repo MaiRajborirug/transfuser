@@ -22,7 +22,8 @@
 // #define IMG_W 480
 // #define IMG_H 240
 #define IMG_W 960
-#define IMG_H 720
+#define IMG_H 480
+// 720
 
 __device__
 bool condition_22_is_satisfied(
