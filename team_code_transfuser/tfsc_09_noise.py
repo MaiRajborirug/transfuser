@@ -197,7 +197,7 @@ class agent(HybridAgent):
         semantic_front = input_data["semantics_front"][1][:, :, 2] # semantic to semantic_front
         pred_mask = self._distort(semantic_front, value=5, n_labels=24)
         
-        # NOTE: CARLA segmentation, initialize gt segmentation
+        # NOTE: CARLA segmentation, initialize gt segmentation # edit 09/27 add is_wp
         is_wp, is_road, is_nonanimated, is_terrain, is_animated, group_label = group_segment(pred_mask)
         self.resize_visualize(group_label, 'segment label', binary_input=False)
         
@@ -227,36 +227,9 @@ class agent(HybridAgent):
         self.w_e = input_data['imu'][1][5] # angular vel in z-axis (rad/s)
         a_e = input_data["imu"][1][0] # accelaration in vehicle direction (m/s^2)
         control_acc = a_e
-        
-        # NOTE: chaek if wp segmentation works -----------
-        # Define the ranges for each color channel
-        r0, r1 = 180, 255  # Example values for red channel range
-        g0, g1 = 180, 255  # Example values for green channel range
-        b0, b1 = 180, 255  # Example values for blue channel range
 
-        # Split the BGR array into its separate channels
-        b_channel = self.bgr_[:, :, 0]
-        g_channel = self.bgr_[:, :, 1]
-        r_channel = self.bgr_[:, :, 2]
-
-        # Create a boolean mask where the conditions for r, g, and b are satisfied
-        mask = (r_channel > r0) & (r_channel < r1) & (g_channel > g0) & (g_channel < g1) & (b_channel > b0) & (b_channel < b1)
-
-        # Convert the boolean mask to integers (1 for True, 0 for False)
-        self.wp_img = (mask).astype(np.uint8)
         
-        # self.resize_visualize(self.wp_img , 'mask waypoint', binary_input=True)
-        
-        # # NOTE: check
-        # if self.step == 40:
-        #     self.bgr_ = self.bgr_[400:,500:550]
-        #     bgr_reshaped = self.bgr_.reshape(-1, self.bgr_.shape[-1])
-        #     bgr_unique = np.unique(bgr_reshaped, axis=0, return_counts=True)
-        #     print(bgr_unique)
-        #     breakpoint()
-        #------------------
-            
-        
+        # NOTE: require parameter for both target following and obstacle avoidance
         if self._step == 0:
             self.phi_e = 0 # angular acceleration in z-axis (rad/s^2)
             self.last_w_e = self.w_e 
@@ -264,6 +237,7 @@ class agent(HybridAgent):
             self.phi_e = (self.w_e - self.last_w_e) / self.delta_time
             self.last_w_e = self.w_e
         
+        # might require to be remove
         if v_e < 0.2 and control.brake > 0:
             delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
             _ = self.throttle_controller.step(delta)
@@ -275,17 +249,23 @@ class agent(HybridAgent):
         nu = self.optical_flow_output[:, :, 1]
         mu = mu.astype(np.float32)
         nu = nu.astype(np.float32)
-                
+        
         # find angular acceleration
         if abs(control.steer) > 0.05: # desensitize the value
             turning_radius = (self.agent_backwhl2cm**2 + self.agent_front2back_whl**2*abs(1/math.tan(control.steer)))
         else:
             turning_radius = np.inf
-
+        
         control_steer_normalized = control.steer * v_e/turning_radius # desire angular velocity
         control_steering_rate = (control_steer_normalized - self.w_e) / self.delta_time # current angular accelaration in z-axis
-
         steering_limit = v_e/self.turning_radius
+        
+        # NOTE: target following------------
+        
+        
+        
+        # NOTE: obstacle avoidance----------
+
         self.alg2_solver.phi_bounds = ((-steering_limit-self.w_e)/self.delta_time,(steering_limit-self.w_e)/self.delta_time)        
         self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
         self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
@@ -426,7 +406,7 @@ class agent(HybridAgent):
         semantic_front = input_data["semantics_front"][1][:, :, 2] # semantic to semantic_front
         pred_mask = self._distort(semantic_front, value=5, n_labels=24)
         
-        # NOTE: CARLA segmentation, initialize gt segmentation # edit 09/27 add is_wp
+        # NOTE: CARLA segmentation, initialize gt segmentation # edit 09/27 add 
         is_road, is_nonanimated, is_terrain, is_animated, group_label = group_segment(pred_mask)
         self.resize_visualize(group_label, 'segment label', binary_input=False)
         
