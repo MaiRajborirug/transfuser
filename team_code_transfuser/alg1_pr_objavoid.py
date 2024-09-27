@@ -17,7 +17,7 @@ from memory_profiler import profile
 pycuda.tools.get_default_device(0)  # initialize cuda device
 # project_root = '/home/haoming/git/transfuser'
 # cuda_source_code = Path(project_root + '/team_code_transfuser/alg1_pycuda_copy.cu').read_text()
-cuda_source_code = Path('/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_2.cu').read_text()
+cuda_source_code = Path('/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_objavoid.cu').read_text()
 
 # cuda_source_code = Path('alg1_pycuda_copy.cu').read_text()
 kernel = SourceModule(cuda_source_code)
@@ -49,8 +49,8 @@ class Algorithm1:
         self.grid_dim = (30, 32)
 
         # setup cuda kernel
-        self.certify_mu_func = kernel.get_function("certify_u_for_mu")
-        self.certify_nu_func = kernel.get_function("certify_u_for_nu")
+        self.certify_u_for_mu = kernel.get_function("certify_u_for_mu")
+        self.certify_u_for_nu = kernel.get_function("certify_u_for_nu")
 
         # buffer size calculations
         self.fp32_vector_buffersize = self.N_pixels * 4
@@ -135,12 +135,12 @@ class Algorithm1:
         # call function
 
         pycuda.driver.Context.synchronize()
-        self.certify_mu_func(self.f, self.d_mus, self.d_nus, self.d_Xs, self.d_Ys, self.d_offsets, v_e, psi_e, a_e,
+        self.certify_u_for_mu(self.f, self.d_mus, self.d_nus, self.d_Xs, self.d_Ys, self.d_offsets, v_e, psi_e, a_e,
                              phi_e, self.gridsearchsize, self.N_pixels, self.d_mu_is_certifieds, self.d_mu_b_outs,
                              self.d_mu_i_outs, self.d_mu_dot_outs, self.d_animateds, self.d_depth_upper_bound, 
                              self.d_depth_lower_bound, block=self.block_dim, grid=self.grid_dim)
         pycuda.driver.Context.synchronize()
-        self.certify_nu_func(self.f, self.d_mus, self.d_nus, self.d_Xs, self.d_Ys, self.d_offsets, v_e, psi_e, a_e,
+        self.certify_u_for_nu(self.f, self.d_mus, self.d_nus, self.d_Xs, self.d_Ys, self.d_offsets, v_e, psi_e, a_e,
                              phi_e, self.gridsearchsize, self.N_pixels, self.d_nu_is_certifieds, self.d_nu_b_outs,
                              self.d_nu_i_outs, self.d_nu_dot_outs, self.d_animateds, self.d_depth_upper_bound, 
                              self.d_depth_lower_bound, block=self.block_dim, grid=self.grid_dim)
