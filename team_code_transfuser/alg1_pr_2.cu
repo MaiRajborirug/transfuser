@@ -14,13 +14,8 @@
 
 // height threshold for obstacle avoidance
 // this is down positive, origin at camera location
-
 #define H_BAR 0.1f
 
-// #define IMG_W 800
-// #define IMG_H 600
-// #define IMG_W 480
-// #define IMG_H 240
 #define IMG_W 960
 #define IMG_H 720
 
