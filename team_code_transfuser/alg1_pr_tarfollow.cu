@@ -515,12 +515,14 @@ void certify_u_for_mu(
     float d_upper_bound = d_upper_bounds[tid];
     float d_lower_bound = d_lower_bounds[tid];
 
-    float mu_b = R * R * Y_i_t * nu_i / (X_i_t * H_BAR * H_BAR);
+    float mu_b = 0.0f; //R * R * Y_i_t * nu_i / (X_i_t * H_BAR * H_BAR);
     mu_b_out[tid] = mu_b;
     mu_i_out[tid] = mu_i;
-    bool mu_find_upperbound = X_i_t < 0.0f;
+    bool mu_find_left = X_i_t <= -0.00286f; // check whimsicle
+    bool mu_find_right = X_i_t >= 0.00286f;
+    bool mu_find_mid = (X_i_t <= 0.00286f) && (X_i_t >= -0.00286f);
 
-    if (mu_find_upperbound && mu_i >= mu_b){
+    if (mu_find_right && mu_i >= mu_b){ //
         float mu_upper = optimize_mu_dot_i(
             f, 
             mu_i,
@@ -536,9 +538,10 @@ void certify_u_for_mu(
             animated,
             d_upper_bound,
             d_lower_bound);
-        u_certified_for_mu[tid] = mu_upper < -5000.0f*offset;
+        u_certified_for_mu[tid] = mu_upper < 0.0f; //
         mu_dot_out[tid] = mu_upper;
-    } else if (!mu_find_upperbound && mu_i <= mu_b){
+    } else 
+    if (!mu_find_left && mu_i <= mu_b){
         float mu_lower = optimize_mu_dot_i(
             f, 
             mu_i,
@@ -554,7 +557,7 @@ void certify_u_for_mu(
             animated,
             d_upper_bound,
             d_lower_bound);
-        u_certified_for_mu[tid] = mu_lower > 5000.0f*offset;
+        u_certified_for_mu[tid] = mu_lower > 0.0f; //5000.0f*offset;
         mu_dot_out[tid] = mu_lower;
     } else {
         u_certified_for_mu[tid] = true;
@@ -772,30 +775,31 @@ void certify_u_for_nu(
     float d_upper_bound = d_upper_bounds[tid];
     float d_lower_bound = d_lower_bounds[tid];
 
-    float nu_b = H_BAR * H_BAR * X_i_t * mu_i / (R * R * Y_i_t);
+    float nu_b = 0.0f; //H_BAR * H_BAR * X_i_t * mu_i / (R * R * Y_i_t);
     nu_b_out[tid] = nu_b;
     nu_i_out[tid] = nu_i;
-    bool nu_find_upperbound = true;
+    bool nu_find_upperbound = Y_i_t > 0.0014f;;
 
-    if (nu_find_upperbound && nu_i >= nu_b){
-        float nu_upper = optimize_nu_dot_i(
-            f, 
-            mu_i,
-            nu_i, 
-            X_i_t, 
-            Y_i_t, 
-            v_e, 
-            psi_e, 
-            a_e, 
-            phi_e, 
-            N_points,
-            true,
-            animated,
-            d_upper_bound,
-            d_lower_bound);
-        u_certified_for_nu[tid] = nu_upper < -offset;
-        nu_dot_out[tid] = nu_upper;
-    } else if (!nu_find_upperbound && nu_i <= nu_b){
+    // if (nu_find_upperbound && nu_i >= nu_b){
+    //     float nu_upper = optimize_nu_dot_i(
+    //         f, 
+    //         mu_i,
+    //         nu_i, 
+    //         X_i_t, 
+    //         Y_i_t, 
+    //         v_e, 
+    //         psi_e, 
+    //         a_e, 
+    //         phi_e, 
+    //         N_points,
+    //         true,
+    //         animated,
+    //         d_upper_bound,
+    //         d_lower_bound);
+    //     u_certified_for_nu[tid] = nu_upper < -offset;
+    //     nu_dot_out[tid] = nu_upper;
+    // } else 
+    if (!nu_find_upperbound && nu_i <= nu_b){
         float nu_lower = optimize_nu_dot_i(
             f, 
             mu_i,
@@ -811,7 +815,7 @@ void certify_u_for_nu(
             animated,
             d_upper_bound,
             d_lower_bound);
-        u_certified_for_nu[tid] = nu_lower > offset;
+        u_certified_for_nu[tid] = nu_lower > 0.0f; //offset;
         nu_dot_out[tid] = nu_lower;
     } else {
         u_certified_for_nu[tid] = true;

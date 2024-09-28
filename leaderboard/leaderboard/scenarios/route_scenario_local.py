@@ -297,12 +297,13 @@ class RouteScenario(BasicScenario):
             
             # world.debug.draw_point(wp, size=size, color=color, life_time=persistency) # NOTE: issue no color changing
 
-            # world.debug.draw_line(waypoints[idx-1][0].location + carla.Location(z=vertical_shift),
-            #                     wp, thickness=0.1,
-            #                     color=carla.Color(0, 255, 255), life_time=persistency)
-            world.debug.draw_line(wp + carla.Location(z=0.01),
-                                wp, thickness=size,
-                                color=carla.Color(0, 255, 255), life_time=persistency)            
+            if idx > 0:
+                world.debug.draw_line(waypoints[idx-1][0].location + carla.Location(z=vertical_shift),
+                                    wp, thickness=size,
+                                    color=carla.Color(0, 255, 255), life_time=persistency)
+            # world.debug.draw_line(wp + carla.Location(z=0.01),
+            #                     wp, thickness=size,
+            #                     color=carla.Color(0, 255, 255), life_time=persistency)            
             
             
 
