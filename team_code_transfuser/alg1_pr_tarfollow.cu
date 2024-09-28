@@ -518,9 +518,9 @@ void certify_u_for_mu(
     float mu_b = 0.0f; //R * R * Y_i_t * nu_i / (X_i_t * H_BAR * H_BAR);
     mu_b_out[tid] = mu_b;
     mu_i_out[tid] = mu_i;
-    bool mu_find_left = X_i_t <= -0.00286f; // check whimsicle
-    bool mu_find_right = X_i_t >= 0.00286f;
-    bool mu_find_mid = (X_i_t <= 0.00286f) && (X_i_t >= -0.00286f);
+    bool mu_find_left = X_i_t <= -0.004f; // check whimsicle
+    bool mu_find_right = X_i_t >= 0.004f;
+    bool mu_find_mid = (X_i_t <= 0.004f) && (X_i_t >= -0.004f);
 
     if (mu_find_right && mu_i >= mu_b){ //
         float mu_upper = optimize_mu_dot_i(
@@ -778,7 +778,7 @@ void certify_u_for_nu(
     float nu_b = 0.0f; //H_BAR * H_BAR * X_i_t * mu_i / (R * R * Y_i_t);
     nu_b_out[tid] = nu_b;
     nu_i_out[tid] = nu_i;
-    bool nu_find_upperbound = Y_i_t > 0.0014f;;
+    bool nu_find_upperbound = Y_i_t > 0.002f;;
 
     // if (nu_find_upperbound && nu_i >= nu_b){
     //     float nu_upper = optimize_nu_dot_i(

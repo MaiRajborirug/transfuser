@@ -147,11 +147,15 @@ class agent(HybridAgent):
         self.desired_speed = 5.0
         
         # NOTE: for turning controller
-        turn_KP = 1.25
-        turn_KI = 0.75
-        turn_KD = 0.3
+        # turn_KI = 0.75
+        # turn_KP = 1.25
+        # turn_KD = 0.3
+        turn_KI = 0.3
+        turn_KP = 0.3
+        turn_KD = 0.2
         turn_n = 20 # buffer size
         self.turn_controller = PIDController(K_P=turn_KP, K_I=turn_KI, K_D=turn_KD, n=turn_n)
+        self.aug_degrees = [0]
 
     #@profile
     def run_step(self, input_data, timestamp):
@@ -188,7 +192,7 @@ class agent(HybridAgent):
         control.brake = brake
         control.steer = 0.0
         self.step +=1
-        print(f"{self.step}, v:{v_e:.2f}, a:{a_e:.2f}, si:{control_signal:.2f}, th:{throttle:.2f}, brake:{brake:.2f}")
+        # print(f"{self.step}, v:{v_e:.2f}, a:{a_e:.2f}, si:{control_signal:.2f}, th:{throttle:.2f}, brake:{brake:.2f}")
         
         #------ start old algorithm -----
         delta_time = CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
@@ -395,7 +399,7 @@ class agent(HybridAgent):
         
         else:
             nominal_control = (control_acc, control_steering_rate)
-            print("nominal control action: {:.3%}, {:.3%}".format(control_acc, control_steering_rate))
+            # print("nominal control action: {:.3%}, {:.3%}".format(control_acc, control_steering_rate))
             
             def certify_control_action(control_action):
                 a_e, phi_e = control_action
@@ -429,24 +433,26 @@ class agent(HybridAgent):
                 (a_control, phi_control) = res
                 # print("certified control action: ", a_control, phi_control)
                 
-                a_control = control_acc # before SC 2              
-                delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-                throttle = self.throttle_controller.step(delta)
-                throttle = np.clip(throttle, 0.4, 0.75)
+                # a_control = control_acc # before SC 2              
+                # delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+                # throttle = self.throttle_controller.step(delta)
+                # throttle = np.clip(throttle, 0.4, 0.75)
                 # throttle = np.maximum(control.throttle /2, 0.25)
-                brake = 0.0
+                # brake = 0.0
                 
-                # steer mapping
-                desire_w = self.w_e + self.delta_time * phi_control # gain steer
-                # print('change in phi', self.delta_time * phi_control)
-                steer = self._calculate_steer(v_e, desire_w)
+                # # steer mapping
+                # desire_w = self.w_e + self.delta_time * phi_control # gain steer
+                # # print('change in phi', self.delta_time * phi_control)
+                # steer = self._calculate_steer(v_e, desire_w)
                 
-                COM_length = 1.75
-                wheel_length = 2.9
-                R = np.maximum(v_e / abs(self.w_e), self.turning_radius)
-                print(f'R: {R}, speed: {v_e}, omega_z: {self.w_e}')
-                steer = math.atan(math.sqrt(wheel_length * wheel_length / (R * R - COM_length * COM_length))) * np.sign(self.w_e)
-                steer = np.clip(steer,-1,1)
+                # COM_length = 1.75
+                # wheel_length = 2.9
+                # R = np.maximum(v_e / abs(self.w_e), self.turning_radius)
+                # print(f'R: {R}, speed: {v_e}, omega_z: {self.w_e}')
+                # steer = math.atan(math.sqrt(wheel_length * wheel_length / (R * R - COM_length * COM_length))) * np.sign(self.w_e)
+                # steer = np.clip(steer,-1,1)
+                steer = self.turn_controller.step(phi_control * self.delta_time)
+                steer = np.clip(steer, -1.0, 1.0)
 
                 # # NOTE: map (a, phi) back to carla control (throttle, steering, break)
                 # if abs(a_control) < 2 * abs(phi_control) * self.turning_radius: # prioritize turning arbitary comparison
@@ -490,7 +496,10 @@ class agent(HybridAgent):
                 # control.steer = steer
                 # control.throttle = np.minimum(throttle, control.throttle)
                 # control.brake = np.maximum(brake, control.brake)
-                print(f'target follow:a_out{a_control:.2f}, phi{phi_control:.2f},  th: {control.throttle:.2%}, br: {control.brake}, st: {control.steer:.3%}')
+                
+                # print(f'target follow:a_out{a_control:.2f}, phi{phi_control:.2f},  th: {control.throttle:.2%}, br: {control.brake}, st: {control.steer:.3%}')
+                
+                print(f'step {self._step}, current angular acc:{self.phi_e:.2f}, propose angular acc: {phi_control:.2f}')
                 
                 self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((mu,nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
                 # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((mu,nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
