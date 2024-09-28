@@ -20,6 +20,7 @@ import torchvision.transforms as T
 from leaderboard.autoagents import autonomous_agent
 import math
 import yaml
+import matplotlib.pyplot as plt
 
 from optical_flow import optical_flow
 # from segmentation import segmentation
@@ -170,12 +171,12 @@ class agent(HybridAgent):
         returns: control 
         see https://carla.readthedocs.io/en/latest/python_api/#carlavehiclecontrol
         """
-        self.cruise_controller
+        # NOTE: for cruise controller -------
         a_e = input_data["imu"][1][0]
         v_e = np.maximum(0,input_data["speed"][1]["speed"])
         delta = self.desired_speed - v_e
         # delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-        control_signal = self.throttle_controller.step(delta)
+        control_signal = self.cruise_controller.step(delta)
         # throttle = np.clip(throttle+0.15, 0.0, 0.75)
         if control_signal > 0:
             throttle = np.clip(control_signal, 0.0, 1.0)
@@ -190,26 +191,21 @@ class agent(HybridAgent):
         control = carla.VehicleControl() 
         control.throttle = throttle
         control.brake = brake
-        control.steer = 0.0
+        control.steer = -0.2
         self.step +=1
-        # print(f"{self.step}, v:{v_e:.2f}, a:{a_e:.2f}, si:{control_signal:.2f}, th:{throttle:.2f}, brake:{brake:.2f}")
+        print(f"{self.step}, v:{v_e:.2f}, a:{a_e:.2f}, si:{control_signal:.2f}, th:{throttle:.2f}, brake:{brake:.2f}")
         
         #------ start old algorithm -----
         delta_time = CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
         self._step += 1
         
+        # for fast testing, since the vehicle only run after step ~ 50, we can skip the first 50 steps
+        if self._step < 50: # Great success!
+            return control
+        
         # NOTE: optical flow output
         self.bgr_ = input_data["rgb_front"][1][:, :, :3]  # rgb to rgb_front
         self.optical_flow_output = self.optical_flow.predict(self.bgr_, self.delta_time)
-        
-        
-        # NOTE: segmentation output -> replace with GT segmentation
-        # rgb_pil = Image.fromarray(cv2.cvtColor(self.bgr_.astype('uint8'), cv2.COLOR_BGR2RGB))
-        # rgb_pil = self.transform(rgb_pil)
-        # rgb_pil = rgb_pil.unsqueeze(0)  # Add batch dimension # (3, 256, 256) -> (1, 3, 256, 256)
-        # pred_mask = self.segment_model(rgb_pil.to(self.device))  # Pass the image to the model
-        # pred_mask = torch.argmax(pred_mask, dim=1)[0].cpu().numpy()  # Assuming channel is at dim=1
-        # pred_mask = cv2.resize(pred_mask, (960, 480), interpolation=cv2.INTER_NEAREST)
         
         # NOTE: gt segmentation
         semantic_front = input_data["semantics_front"][1][:, :, 2] # semantic to semantic_front
@@ -263,10 +259,10 @@ class agent(HybridAgent):
             return control
         
         # convert optical flow to mu and nu
-        mu = self.optical_flow_output[:, :, 0]
-        nu = self.optical_flow_output[:, :, 1]
-        mu = mu.astype(np.float32)
-        nu = nu.astype(np.float32)
+        self.mu = self.optical_flow_output[:, :, 0]
+        self.nu =self.optical_flow_output[:, :, 1]
+        self.mu = self.mu.astype(np.float32)
+        self.nu =self.nu.astype(np.float32)
         
         # find angular acceleration
         if abs(control.steer) > 0.05: # desensitize the value
@@ -282,7 +278,7 @@ class agent(HybridAgent):
 
         # # NOTE: obstacle avoidance----------
         # self.alg2_solver.phi_bounds = ((-steering_limit-self.w_e)/self.delta_time,(steering_limit-self.w_e)/self.delta_time)        
-        # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
+        # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run(( self.mu,self.nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
         # self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
         # self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels        
         # self.resize_visualize(self.nominal_pixel_is_certifieds, 'white = certified pixels')
@@ -299,7 +295,7 @@ class agent(HybridAgent):
         #     def certify_control_action(control_action):
         #         a_e, phi_e = control_action
         #         # print("certifying:", a_e, phi_e)
-        #         pixel_is_certifieds, _ = self.alg1_solver.run((mu, nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
+        #         pixel_is_certifieds, _ = self.alg1_solver.run(( self.mu, self.nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
 
 
         #         # if (v_e > -0.001 and v_e < 0.001):
@@ -369,8 +365,8 @@ class agent(HybridAgent):
         #         control.brake = np.maximum(brake, control.brake)
         #         print('object avoid: throttle: {:.2%}, brake: {}, steer: {:.3%}'.format(control.throttle, control.brake, control.steer))
                 
-        #         self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
-        #         # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
+        #         self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
+        #         # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
         #         self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
         #         self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels
         #         # self.resize_visualize(pixel_is_certifieds , 'corrected certified pixels', cert=False)
@@ -384,12 +380,11 @@ class agent(HybridAgent):
         
         # NOTE: target following -----
         self.alg2_solver_follow.phi_bounds = ((-steering_limit-self.w_e)/self.delta_time,(steering_limit-self.w_e)/self.delta_time)        
-        self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((mu,nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
+        self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((self.mu,self.nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
         self.nominal_pixel_is_certifieds = np.logical_or(1-is_wp, self.nominal_pixel_is_certifieds) # check only at wp
         
         
         # self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels      
-        # breakpoint()  
         self.resize_visualize(self.nominal_pixel_is_certifieds, 'target not follow before update')
         
         if self.nominal_pixel_is_certifieds.sum() == self.nominal_pixel_is_certifieds.size: #> self.certify_threshold:
@@ -404,7 +399,7 @@ class agent(HybridAgent):
             def certify_control_action(control_action):
                 a_e, phi_e = control_action
                 # print("certifying:", a_e, phi_e)
-                pixel_is_certifieds, _ = self.alg1_solver_follow.run((mu, nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
+                pixel_is_certifieds, _ = self.alg1_solver_follow.run((self.mu, self.nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
 
 
                 # if (v_e > -0.001 and v_e < 0.001):
@@ -489,9 +484,10 @@ class agent(HybridAgent):
                 #     brake = 1
                 #     steer = 0
                 
-                control.steer = steer
-                control.throttle = throttle
-                control.brake = brake
+                
+                # control.steer = steer
+                # control.throttle = throttle
+                # control.brake = brake
 
                 # control.steer = steer
                 # control.throttle = np.minimum(throttle, control.throttle)
@@ -501,12 +497,54 @@ class agent(HybridAgent):
                 
                 print(f'step {self._step}, current angular acc:{self.phi_e:.2f}, propose angular acc: {phi_control:.2f}')
                 
-                self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((mu,nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
-                # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((mu,nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
+                self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((self.mu,self.nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
+                # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((self.mu,self.nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
                 self.nominal_pixel_is_certifieds = np.logical_or(1-is_wp, self.nominal_pixel_is_certifieds) # remove road pixels
                 # self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels
                 # self.resize_visualize(pixel_is_certifieds , 'corrected certified pixels', cert=False)
                 self.resize_visualize(self.nominal_pixel_is_certifieds, 'target not follow after update', cert=False)
+            
+            
+                # NOTE: debug attempt
+                if self._step == 60:
+            
+                    # Create a 2x2 subplot grid
+                    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+
+                    # Plot mu
+                    axes[0, 0].set_title('self.mu', fontsize=14)
+                    c1 = axes[0, 0].imshow(self.mu, cmap='viridis', aspect='auto')
+                    axes[0, 0].set_title('self.mu')
+                    fig.colorbar(c1, ax=axes[0, 0])
+
+                    # Plot nu
+                    axes[0, 1].set_title('self.nu', fontsize=14)
+                    c2 = axes[0, 1].imshow(self.nu, cmap='plasma', aspect='auto')
+                    axes[0, 1].set_title('self.nu')
+                    fig.colorbar(c2, ax=axes[0, 1])
+
+                    # Plot self.X
+                    axes[1, 0].set_title('self.X', fontsize=14)
+                    c3 = axes[1, 0].imshow(self.X, cmap='inferno', aspect='auto')
+                    axes[1, 0].set_title('self.X')
+                    fig.colorbar(c3, ax=axes[1, 0])
+
+                    # Plot self.Y
+                    axes[1, 1].set_title('self.Y', fontsize=14)
+                    c4 = axes[1, 1].imshow(self.Y, cmap='magma', aspect='auto')
+                    axes[1, 1].set_title('self.Y')
+                    fig.colorbar(c4, ax=axes[1, 1])
+
+                    # Adjust layout for better spacing
+                    plt.tight_layout()
+
+                    # Show the plot
+                    plt.show()
+                    breakpoint()
+                    
+            
+            
+            
             
                 cv2.waitKey(1)
                 return control # --> return obj avoidance control
@@ -517,6 +555,14 @@ class agent(HybridAgent):
         
         cv2.waitKey(1)
         return control
+    
+    
+    
+    
+    
+    
+    
+    
 # #---------------------------------#
 #     #@profile
 #     def run_step_(self, input_data, timestamp):
@@ -600,10 +646,10 @@ class agent(HybridAgent):
 #             return control
         
 #         # convert optical flow to mu and nu
-#         mu = self.optical_flow_output[:, :, 0]
-#         nu = self.optical_flow_output[:, :, 1]
-#         mu = mu.astype(np.float32)
-#         nu = nu.astype(np.float32)
+#         self.mu = self.optical_flow_output[:, :, 0]
+#         self.nu =self.optical_flow_output[:, :, 1]
+#         self.mu = self.mu.astype(np.float32)
+#         self.nu =self.nu.astype(np.float32)
                 
 #         # find angular acceleration
 #         if abs(control.steer) > 0.05: # desensitize the value
@@ -616,7 +662,7 @@ class agent(HybridAgent):
 
 #         steering_limit = v_e/self.turning_radius
 #         self.alg2_solver.phi_bounds = ((-steering_limit-self.w_e)/self.delta_time,(steering_limit-self.w_e)/self.delta_time)        
-#         self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
+#         self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
 #         self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
 #         self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels        
 #         self.resize_visualize(self.nominal_pixel_is_certifieds, 'white = certified pixels')
@@ -633,7 +679,7 @@ class agent(HybridAgent):
 #         def certify_control_action(control_action):
 #             a_e, phi_e = control_action
 #             # print("certifying:", a_e, phi_e)
-#             pixel_is_certifieds, _ = self.alg1_solver.run((mu, nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
+#             pixel_is_certifieds, _ = self.alg1_solver.run((self.mu, self.nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
 
 
 #             # if (v_e > -0.001 and v_e < 0.001):
@@ -706,8 +752,8 @@ class agent(HybridAgent):
 #             control.brake = np.maximum(brake, control.brake)
 #             print('new control: throttle: {:.2%}, brake: {}, steer: {:.3%}'.format(control.throttle, control.brake, control.steer))
             
-#             self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
-#             # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((mu,nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
+#             self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
+#             # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
 #             self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
 #             self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels
 #             # self.resize_visualize(pixel_is_certifieds , 'corrected certified pixels', cert=False)

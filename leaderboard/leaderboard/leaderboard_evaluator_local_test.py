@@ -470,9 +470,8 @@ def main():
     parser.add_argument('--debug', type=int, help='Run with debug output', default=1)
     parser.add_argument('--record', type=str, default='',
                         help='Use CARLA recording feature to create a recording of the scenario')
-    parser.add_argument('--timeout', default="1800.0" # "60.0",
+    parser.add_argument('--timeout', default="1800.0", # "60.0"
                         help='Set the CARLA client timeout value in seconds')
-
     # simulation setup
     parser.add_argument('--routes',
                         help='Name of the route to be executed. Point to the route_xml_file to be executed.',
