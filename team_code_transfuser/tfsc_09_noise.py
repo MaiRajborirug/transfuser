@@ -191,9 +191,9 @@ class agent(HybridAgent):
         control = carla.VehicleControl() 
         control.throttle = throttle
         control.brake = brake
-        control.steer = -0.2
+        control.steer = -0.0
         self.step +=1
-        print(f"{self.step}, v:{v_e:.2f}, a:{a_e:.2f}, si:{control_signal:.2f}, th:{throttle:.2f}, brake:{brake:.2f}")
+        # print(f"{self.step}, v:{v_e:.2f}, a:{a_e:.2f}, si:{control_signal:.2f}, th:{throttle:.2f}, brake:{brake:.2f}")
         
         #------ start old algorithm -----
         delta_time = CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
@@ -505,42 +505,42 @@ class agent(HybridAgent):
                 self.resize_visualize(self.nominal_pixel_is_certifieds, 'target not follow after update', cert=False)
             
             
-                # NOTE: debug attempt
-                if self._step == 60:
+                # # NOTE: debug attempt
+                # if self._step == 60:
             
-                    # Create a 2x2 subplot grid
-                    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+                #     # Create a 2x2 subplot grid
+                #     fig, axes = plt.subplots(2, 2, figsize=(10, 8))
 
-                    # Plot mu
-                    axes[0, 0].set_title('self.mu', fontsize=14)
-                    c1 = axes[0, 0].imshow(self.mu, cmap='viridis', aspect='auto')
-                    axes[0, 0].set_title('self.mu')
-                    fig.colorbar(c1, ax=axes[0, 0])
+                #     # Plot mu
+                #     axes[0, 0].set_title('self.mu', fontsize=14)
+                #     c1 = axes[0, 0].imshow(self.mu, cmap='viridis', aspect='auto')
+                #     axes[0, 0].set_title('self.mu')
+                #     fig.colorbar(c1, ax=axes[0, 0])
 
-                    # Plot nu
-                    axes[0, 1].set_title('self.nu', fontsize=14)
-                    c2 = axes[0, 1].imshow(self.nu, cmap='plasma', aspect='auto')
-                    axes[0, 1].set_title('self.nu')
-                    fig.colorbar(c2, ax=axes[0, 1])
+                #     # Plot nu
+                #     axes[0, 1].set_title('self.nu', fontsize=14)
+                #     c2 = axes[0, 1].imshow(self.nu, cmap='plasma', aspect='auto')
+                #     axes[0, 1].set_title('self.nu')
+                #     fig.colorbar(c2, ax=axes[0, 1])
 
-                    # Plot self.X
-                    axes[1, 0].set_title('self.X', fontsize=14)
-                    c3 = axes[1, 0].imshow(self.X, cmap='inferno', aspect='auto')
-                    axes[1, 0].set_title('self.X')
-                    fig.colorbar(c3, ax=axes[1, 0])
+                #     # Plot self.X
+                #     axes[1, 0].set_title('self.X', fontsize=14)
+                #     c3 = axes[1, 0].imshow(self.X, cmap='inferno', aspect='auto')
+                #     axes[1, 0].set_title('self.X')
+                #     fig.colorbar(c3, ax=axes[1, 0])
 
-                    # Plot self.Y
-                    axes[1, 1].set_title('self.Y', fontsize=14)
-                    c4 = axes[1, 1].imshow(self.Y, cmap='magma', aspect='auto')
-                    axes[1, 1].set_title('self.Y')
-                    fig.colorbar(c4, ax=axes[1, 1])
+                #     # Plot self.Y
+                #     axes[1, 1].set_title('self.Y', fontsize=14)
+                #     c4 = axes[1, 1].imshow(self.Y, cmap='magma', aspect='auto')
+                #     axes[1, 1].set_title('self.Y')
+                #     fig.colorbar(c4, ax=axes[1, 1])
 
-                    # Adjust layout for better spacing
-                    plt.tight_layout()
+                #     # Adjust layout for better spacing
+                #     plt.tight_layout()
 
-                    # Show the plot
-                    plt.show()
-                    breakpoint()
+                #     # Show the plot
+                #     plt.show()
+                #     breakpoint()
                     
             
             

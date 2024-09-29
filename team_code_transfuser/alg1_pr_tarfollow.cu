@@ -19,6 +19,9 @@
 #define IMG_W 960
 #define IMG_H 720
 
+#define Y_MIN 0.01407f // Y > Y_MIN for target following
+#define X_RANGE 0.004f // X < -X_RANGE or X > X_RANGE for target following
+
 __device__
 bool condition_22_is_satisfied(
     float f,
@@ -518,11 +521,12 @@ void certify_u_for_mu(
     float mu_b = 0.0f; //R * R * Y_i_t * nu_i / (X_i_t * H_BAR * H_BAR);
     mu_b_out[tid] = mu_b;
     mu_i_out[tid] = mu_i;
-    bool mu_find_left = X_i_t <= -0.004f; // check whimsicle
-    bool mu_find_right = X_i_t >= 0.004f;
-    bool mu_find_mid = (X_i_t <= 0.004f) && (X_i_t >= -0.004f);
+    bool nu_find_upperbound = Y_i_t > Y_MIN;
+    bool mu_find_left = X_i_t <= -X_RANGE; // check whimsicle
+    bool mu_find_right = X_i_t >= X_RANGE;
+    bool mu_find_mid = (X_i_t <= X_RANGE) && (X_i_t >= -X_RANGE);
 
-    if (mu_find_right && mu_i >= mu_b){ //
+    if (nu_find_upperbound && mu_find_right && mu_i >= mu_b){ //
         float mu_upper = optimize_mu_dot_i(
             f, 
             mu_i,
@@ -541,7 +545,7 @@ void certify_u_for_mu(
         u_certified_for_mu[tid] = mu_upper < 0.0f; //
         mu_dot_out[tid] = mu_upper;
     } else 
-    if (!mu_find_left && mu_i <= mu_b){
+    if (nu_find_upperbound && mu_find_left && mu_i <= -mu_b){
         float mu_lower = optimize_mu_dot_i(
             f, 
             mu_i,
@@ -778,7 +782,7 @@ void certify_u_for_nu(
     float nu_b = 0.0f; //H_BAR * H_BAR * X_i_t * mu_i / (R * R * Y_i_t);
     nu_b_out[tid] = nu_b;
     nu_i_out[tid] = nu_i;
-    bool nu_find_upperbound = Y_i_t > 0.002f;;
+    bool nu_find_upperbound = Y_i_t > Y_MIN; // pixel index 360, see whimsicle
 
     // if (nu_find_upperbound && nu_i >= nu_b){
     //     float nu_upper = optimize_nu_dot_i(
