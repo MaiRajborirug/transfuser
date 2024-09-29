@@ -35,7 +35,6 @@ from tf_2404_noise import HybridAgent
 # NOTE: get noise level
 NOISE = float(os.environ.get('NOISE')) # to run step -> d_std
 from optical_flow import OpticalFlowVisualizer
-from collections import deque
 import torchvision.transforms as transforms
 from memory_profiler import profile
 
@@ -133,10 +132,6 @@ class agent(HybridAgent):
         # NOTE: define safety certificate solver edit 09/27 add path here
         self.cuda_path = '/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_objavoid.cu' # obstacle avoidance path
         self.alg1_solver = Algorithm1(self.focal_len, (self.camera_width, self.camera_height), self.X, self.Y, self.certification_offset, self.cuda_path)
-        
-        self.alg2_solver = Algorithm2()
-        self.last_w_e = 0  # angular velocity in z-axis
-        
         self.cuda_path_follow = '/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_tarfollow.cu' # obstacle avoidance path
         self.alg1_solver_follow = Algorithm1(self.focal_len, (self.camera_width, self.camera_height), self.X, self.Y, self.certification_offset, self.cuda_path_follow)
         
@@ -144,6 +139,11 @@ class agent(HybridAgent):
         
         
         # NOTE: for cruise controller
+        self.alg2_solver = Algorithm2()
+        self.w_e_deque = deque([0 for _ in range(3)], maxlen=3)
+        self.w_e_weight = [0.1, 0.3, 0.6]
+        self.w_e_weight2 = [0.1, 0.3, 0]
+        
         self.cruise_controller = PIDController(K_P=0.25, K_I=0.5, K_D=0.2, n=20)
         self.desired_speed = 5.0
         
@@ -172,10 +172,10 @@ class agent(HybridAgent):
         see https://carla.readthedocs.io/en/latest/python_api/#carlavehiclecontrol
         """
         # NOTE: for cruise controller -------
-        a_e = input_data["imu"][1][0]
-        v_e = np.maximum(0,input_data["speed"][1]["speed"])
-        delta = self.desired_speed - v_e
-        # delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        self.a_e = input_data["imu"][1][0]
+        self.v_e = np.maximum(0,input_data["speed"][1]["speed"])
+        delta = self.desired_speed - self.v_e
+        # delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
         control_signal = self.cruise_controller.step(delta)
         # throttle = np.clip(throttle+0.15, 0.0, 0.75)
         if control_signal > 0:
@@ -193,7 +193,7 @@ class agent(HybridAgent):
         control.brake = brake
         control.steer = -0.0
         self.step +=1
-        # print(f"{self.step}, v:{v_e:.2f}, a:{a_e:.2f}, si:{control_signal:.2f}, th:{throttle:.2f}, brake:{brake:.2f}")
+        # print(f"{self.step}, v:{self.v_e:.2f}, a:{self.a_e:.2f}, si:{control_signal:.2f}, th:{throttle:.2f}, brake:{brake:.2f}")
         
         #------ start old algorithm -----
         delta_time = CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
@@ -237,23 +237,18 @@ class agent(HybridAgent):
         d_lower = distance * np.exp(-self.d_std)
         
         # NOTE: for certificate and control mapping
-        v_e = np.maximum(0,input_data["speed"][1]["speed"]) # speedometer in vehicle direction (m/s)
-        self.w_e = input_data['imu'][1][5] # angular vel in z-axis (rad/s)
-        a_e = input_data["imu"][1][0] # accelaration in vehicle direction (m/s^2)
-        control_acc = a_e
 
-        
-        # NOTE: require parameter for both target following and obstacle avoidance
-        if self._step == 0:
-            self.phi_e = 0 # angular acceleration in z-axis (rad/s^2)
-            self.last_w_e = self.w_e 
-        else:
-            self.phi_e = (self.w_e - self.last_w_e) / self.delta_time
-            self.last_w_e = self.w_e
+        # NOTE: require parameter for both target following and obstacle avoidance        
+        self.w_e_deque.append(input_data['imu'][1][5])
+        self.w_e = np.average(self.w_e_deque, weights=self.w_e_weight)
+        self.v_e = input_data['speed'][1]['speed']
+        self.phi_e = (np.average(self.w_e_deque, weights=self.w_e_weight) - np.average(self.w_e_deque, weights=self.w_e_weight2)) / self.delta_time
+        self.a_e = input_data["imu"][1][0] # accelaration in vehicle direction (m/s^2)
+        control_acc = self.a_e
         
         # might require to be remove
-        if v_e < 0.2 and control.brake > 0:
-            delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        if self.v_e < 0.2 and control.brake > 0:
+            delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
             _ = self.throttle_controller.step(delta)
             cv2.waitKey(1)
             return control
@@ -270,21 +265,21 @@ class agent(HybridAgent):
         else:
             turning_radius = np.inf
         
-        control_steer_normalized = control.steer * v_e/turning_radius # desire angular velocity
+        control_steer_normalized = control.steer * self.v_e/turning_radius # desire angular velocity
         control_steering_rate = (control_steer_normalized - self.w_e) / self.delta_time # current angular accelaration in z-axis
-        steering_limit = v_e/self.turning_radius
+        steering_limit = self.v_e/self.turning_radius
         
 
 
         # # NOTE: obstacle avoidance----------
         # self.alg2_solver.phi_bounds = ((-steering_limit-self.w_e)/self.delta_time,(steering_limit-self.w_e)/self.delta_time)        
-        # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run(( self.mu,self.nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
+        # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run(( self.mu,self.nu,self.v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
         # self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
         # self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels        
         # self.resize_visualize(self.nominal_pixel_is_certifieds, 'white = certified pixels')
         
         # if self.nominal_pixel_is_certifieds.sum() == self.nominal_pixel_is_certifieds.size: # > self.certify_threshold:
-        #     delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        #     delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
         #     _ = self.throttle_controller.step(delta)
 
         
@@ -293,12 +288,12 @@ class agent(HybridAgent):
         #     print("nominal control action: {:.3%}, {:.3%}".format(control_acc, control_steering_rate))
             
         #     def certify_control_action(control_action):
-        #         a_e, phi_e = control_action
-        #         # print("certifying:", a_e, phi_e)
-        #         pixel_is_certifieds, _ = self.alg1_solver.run(( self.mu, self.nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
+        #         self.a_e, self.phi_e = control_action
+        #         # print("certifying:", self.a_e, self.phi_e)
+        #         pixel_is_certifieds, _ = self.alg1_solver.run(( self.mu, self.nu, self.v_e, self.w_e, self.a_e, self.phi_e, is_animated, d_upper, d_lower))
 
 
-        #         # if (v_e > -0.001 and v_e < 0.001):
+        #         # if (self.v_e > -0.001 and self.v_e < 0.001):
         #         #     print("certified due to being stationary")
         #         #     return True
 
@@ -330,7 +325,7 @@ class agent(HybridAgent):
         #             # print('sc case 1')
         #             # throttle mapping
         #             a_control = control_acc # before SC 2              
-        #             delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        #             delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
         #             throttle = self.throttle_controller.step(delta)
         #             throttle = np.clip(throttle+0.15, 0.0, 0.75)
         #             # throttle = np.maximum(control.throttle /2, 0.25)
@@ -339,12 +334,12 @@ class agent(HybridAgent):
         #             # steer mapping
         #             desire_w = self.w_e + self.delta_time * phi_control
         #             # print('change in phi', self.delta_time * phi_control)
-        #             steer = self._calculate_steer(v_e, desire_w)
+        #             steer = self._calculate_steer(self.v_e, desire_w)
                 
         #         elif a_control > -0.2: # prioritize throttle
         #             # print('sc case 2')
         #             # throttle mapping           
-        #             delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        #             delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
         #             throttle = self.throttle_controller.step(delta)
         #             throttle = np.clip(throttle, 0.0, 0.75)
         #             brake = 0
@@ -352,7 +347,7 @@ class agent(HybridAgent):
         #             # steer mapping
         #             desire_w = self.w_e + self.delta_time * phi_control
         #             # print('change in phi', self.delta_time * phi_control)
-        #             steer = self._calculate_steer(v_e, desire_w)
+        #             steer = self._calculate_steer(self.v_e, desire_w)
 
         #         else:
         #             # print('sc case 3')
@@ -365,8 +360,8 @@ class agent(HybridAgent):
         #         control.brake = np.maximum(brake, control.brake)
         #         print('object avoid: throttle: {:.2%}, brake: {}, steer: {:.3%}'.format(control.throttle, control.brake, control.steer))
                 
-        #         self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
-        #         # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
+        #         self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,self.v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
+        #         # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,self.v_e,psi_e,interfuser_acc,interfuser_steering_rate))
         #         self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
         #         self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels
         #         # self.resize_visualize(pixel_is_certifieds , 'corrected certified pixels', cert=False)
@@ -380,29 +375,32 @@ class agent(HybridAgent):
         
         # NOTE: target following -----
         self.alg2_solver_follow.phi_bounds = ((-steering_limit-self.w_e)/self.delta_time,(steering_limit-self.w_e)/self.delta_time)        
-        self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((self.mu,self.nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
+        self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((self.mu,self.nu,self.v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
         self.nominal_pixel_is_certifieds = np.logical_or(1-is_wp, self.nominal_pixel_is_certifieds) # check only at wp
+        
         
         
         # self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels      
         self.resize_visualize(self.nominal_pixel_is_certifieds, 'target not follow before update')
         
         if self.nominal_pixel_is_certifieds.sum() == self.nominal_pixel_is_certifieds.size: #> self.certify_threshold:
-            delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+            delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
             _ = self.throttle_controller.step(delta)
 
         
         else:
             nominal_control = (control_acc, control_steering_rate)
             # print("nominal control action: {:.3%}, {:.3%}".format(control_acc, control_steering_rate))
-            
+            print(self.w_e_deque, (np.average(self.w_e_deque, weights=self.w_e_weight) - np.average(self.w_e_deque, weights=self.w_e_weight2)) / self.delta_time, self.phi_e)
+            a_e = self.a_e
+            phi_e = self.phi_e
             def certify_control_action(control_action):
                 a_e, phi_e = control_action
-                # print("certifying:", a_e, phi_e)
-                pixel_is_certifieds, _ = self.alg1_solver_follow.run((self.mu, self.nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
+                # print("certifying:", self.a_e, self.phi_e)
+                pixel_is_certifieds, _ = self.alg1_solver_follow.run((self.mu, self.nu, self.v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
 
 
-                # if (v_e > -0.001 and v_e < 0.001):
+                # if (self.v_e > -0.001 and self.v_e < 0.001):
                 #     print("certified due to being stationary")
                 #     return True
 
@@ -423,13 +421,14 @@ class agent(HybridAgent):
                 return pixel_is_certifieds.sum() / pixel_is_certifieds.size
         
             res = self.alg2_solver_follow.run(nominal_control, certify_control_action)
+            print((np.average(self.w_e_deque, weights=self.w_e_weight) - np.average(self.w_e_deque, weights=self.w_e_weight2)) / self.delta_time, self.phi_e)
             if res is not None:
                 # (a_control, phi_control) = res     
                 (a_control, phi_control) = res
                 # print("certified control action: ", a_control, phi_control)
                 
                 # a_control = control_acc # before SC 2              
-                # delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+                # delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
                 # throttle = self.throttle_controller.step(delta)
                 # throttle = np.clip(throttle, 0.4, 0.75)
                 # throttle = np.maximum(control.throttle /2, 0.25)
@@ -438,12 +437,12 @@ class agent(HybridAgent):
                 # # steer mapping
                 # desire_w = self.w_e + self.delta_time * phi_control # gain steer
                 # # print('change in phi', self.delta_time * phi_control)
-                # steer = self._calculate_steer(v_e, desire_w)
+                # steer = self._calculate_steer(self.v_e, desire_w)
                 
                 # COM_length = 1.75
                 # wheel_length = 2.9
-                # R = np.maximum(v_e / abs(self.w_e), self.turning_radius)
-                # print(f'R: {R}, speed: {v_e}, omega_z: {self.w_e}')
+                # R = np.maximum(self.v_e / abs(self.w_e), self.turning_radius)
+                # print(f'R: {R}, speed: {self.v_e}, omega_z: {self.w_e}')
                 # steer = math.atan(math.sqrt(wheel_length * wheel_length / (R * R - COM_length * COM_length))) * np.sign(self.w_e)
                 # steer = np.clip(steer,-1,1)
                 steer = self.turn_controller.step(phi_control * self.delta_time)
@@ -454,7 +453,7 @@ class agent(HybridAgent):
                 #     # print('sc case 1')
                 #     # throttle mapping
                 #     a_control = control_acc # before SC 2              
-                #     delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+                #     delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
                 #     throttle = self.throttle_controller.step(delta)
                 #     throttle = np.clip(throttle+0.15, 0.0, 0.75)
                 #     # throttle = np.maximum(control.throttle /2, 0.25)
@@ -463,12 +462,12 @@ class agent(HybridAgent):
                 #     # steer mapping
                 #     desire_w = self.w_e + self.delta_time * phi_control
                 #     # print('change in phi', self.delta_time * phi_control)
-                #     steer = self._calculate_steer(v_e, desire_w)
+                #     steer = self._calculate_steer(self.v_e, desire_w)
                 
                 # elif a_control > -0.2: # prioritize throttle
                 #     # print('sc case 2')
                 #     # throttle mapping           
-                #     delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+                #     delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
                 #     throttle = self.throttle_controller.step(delta)
                 #     throttle = np.clip(throttle, 0.0, 0.75)
                 #     brake = 0
@@ -476,7 +475,7 @@ class agent(HybridAgent):
                 #     # steer mapping
                 #     desire_w = self.w_e + self.delta_time * phi_control
                 #     # print('change in phi', self.delta_time * phi_control)
-                #     steer = self._calculate_steer(v_e, desire_w)
+                #     steer = self._calculate_steer(self.v_e, desire_w)
 
                 # else:
                 #     # print('sc case 3')
@@ -494,11 +493,9 @@ class agent(HybridAgent):
                 # control.brake = np.maximum(brake, control.brake)
                 
                 # print(f'target follow:a_out{a_control:.2f}, phi{phi_control:.2f},  th: {control.throttle:.2%}, br: {control.brake}, st: {control.steer:.3%}')
-                
-                print(f'step {self._step}, current angular acc:{self.phi_e:.2f}, propose angular acc: {phi_control:.2f}')
-                
-                self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((self.mu,self.nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
-                # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((self.mu,self.nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
+                print(f'step {self._step}, w_e:{self.w_e:.2e} current angular acc:{self.phi_e:.2f}, propose angular acc: {phi_control:.2f}')
+                self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((self.mu,self.nu,self.v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
+                # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((self.mu,self.nu,self.v_e,psi_e,interfuser_acc,interfuser_steering_rate))
                 self.nominal_pixel_is_certifieds = np.logical_or(1-is_wp, self.nominal_pixel_is_certifieds) # remove road pixels
                 # self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels
                 # self.resize_visualize(pixel_is_certifieds , 'corrected certified pixels', cert=False)
@@ -506,7 +503,8 @@ class agent(HybridAgent):
             
             
                 # # NOTE: debug attempt
-                # if self._step == 60:
+                if self._step == 60:
+                    breakpoint()
             
                 #     # Create a 2x2 subplot grid
                 #     fig, axes = plt.subplots(2, 2, figsize=(10, 8))
@@ -627,10 +625,10 @@ class agent(HybridAgent):
 #         d_lower = distance * np.exp(-self.d_std)
         
 #         # NOTE: for certificate and control mapping
-#         v_e = np.maximum(0,input_data["speed"][1]["speed"]) # speedometer in vehicle direction (m/s)
+#         self.v_e = np.maximum(0,input_data["speed"][1]["speed"]) # speedometer in vehicle direction (m/s)
 #         self.w_e = input_data['imu'][1][5] # angular vel in z-axis (rad/s)
-#         a_e = input_data["imu"][1][0] # accelaration in vehicle direction (m/s^2)
-#         control_acc = a_e
+#         self.a_e = input_data["imu"][1][0] # accelaration in vehicle direction (m/s^2)
+#         control_acc = self.a_e
         
 #         if self._step == 0:
 #             self.phi_e = 0 # angular acceleration in z-axis (rad/s^2)
@@ -639,8 +637,8 @@ class agent(HybridAgent):
 #             self.phi_e = (self.w_e - self.last_w_e) / self.delta_time
 #             self.last_w_e = self.w_e
         
-#         if v_e < 0.2 and control.brake > 0:
-#             delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+#         if self.v_e < 0.2 and control.brake > 0:
+#             delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
 #             _ = self.throttle_controller.step(delta)
 #             cv2.waitKey(1)
 #             return control
@@ -657,18 +655,18 @@ class agent(HybridAgent):
 #         else:
 #             turning_radius = np.inf
 
-#         control_steer_normalized = control.steer * v_e/turning_radius # desire angular velocity
+#         control_steer_normalized = control.steer * self.v_e/turning_radius # desire angular velocity
 #         control_steering_rate = (control_steer_normalized - self.w_e) / self.delta_time # current angular accelaration in z-axis
 
-#         steering_limit = v_e/self.turning_radius
+#         steering_limit = self.v_e/self.turning_radius
 #         self.alg2_solver.phi_bounds = ((-steering_limit-self.w_e)/self.delta_time,(steering_limit-self.w_e)/self.delta_time)        
-#         self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
+#         self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,self.v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
 #         self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
 #         self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels        
 #         self.resize_visualize(self.nominal_pixel_is_certifieds, 'white = certified pixels')
         
 #         if self.nominal_pixel_is_certifieds.sum() / self.nominal_pixel_is_certifieds.size > self.certify_threshold:
-#             delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+#             delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
 #             _ = self.throttle_controller.step(delta)
 #             cv2.waitKey(1)
 #             return control
@@ -677,12 +675,12 @@ class agent(HybridAgent):
 #         print("nominal control action: {:.3%}, {:.3%}".format(control_acc, control_steering_rate))
         
 #         def certify_control_action(control_action):
-#             a_e, phi_e = control_action
-#             # print("certifying:", a_e, phi_e)
-#             pixel_is_certifieds, _ = self.alg1_solver.run((self.mu, self.nu, v_e, self.w_e, a_e, phi_e, is_animated, d_upper, d_lower))
+#             self.a_e, self.phi_e = control_action
+#             # print("certifying:", self.a_e, self.phi_e)
+#             pixel_is_certifieds, _ = self.alg1_solver.run((self.mu, self.nu, self.v_e, self.w_e, self.a_e, self.phi_e, is_animated, d_upper, d_lower))
 
 
-#             # if (v_e > -0.001 and v_e < 0.001):
+#             # if (self.v_e > -0.001 and self.v_e < 0.001):
 #             #     print("certified due to being stationary")
 #             #     return True
 
@@ -717,7 +715,7 @@ class agent(HybridAgent):
 #                 # print('sc case 1')
 #                 # throttle mapping
 #                 a_control = control_acc # before SC 2              
-#                 delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+#                 delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
 #                 throttle = self.throttle_controller.step(delta)
 #                 throttle = np.clip(throttle+0.15, 0.0, 0.75)
 #                 # throttle = np.maximum(control.throttle /2, 0.25)
@@ -726,12 +724,12 @@ class agent(HybridAgent):
 #                 # steer mapping
 #                 desire_w = self.w_e + self.delta_time * phi_control
 #                 # print('change in phi', self.delta_time * phi_control)
-#                 steer = self._calculate_steer(v_e, desire_w)
+#                 steer = self._calculate_steer(self.v_e, desire_w)
             
 #             elif a_control > -0.2: # prioritize throttle
 #                 # print('sc case 2')
 #                 # throttle mapping           
-#                 delta = np.clip(math.sqrt(v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+#                 delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
 #                 throttle = self.throttle_controller.step(delta)
 #                 throttle = np.clip(throttle, 0.0, 0.75)
 #                 brake = 0
@@ -739,7 +737,7 @@ class agent(HybridAgent):
 #                 # steer mapping
 #                 desire_w = self.w_e + self.delta_time * phi_control
 #                 # print('change in phi', self.delta_time * phi_control)
-#                 steer = self._calculate_steer(v_e, desire_w)
+#                 steer = self._calculate_steer(self.v_e, desire_w)
 
 #             else:
 #                 # print('sc case 3')
@@ -752,8 +750,8 @@ class agent(HybridAgent):
 #             control.brake = np.maximum(brake, control.brake)
 #             print('new control: throttle: {:.2%}, brake: {}, steer: {:.3%}'.format(control.throttle, control.brake, control.steer))
             
-#             self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
-#             # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,v_e,psi_e,interfuser_acc,interfuser_steering_rate))
+#             self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,self.v_e,self.w_e,a_control,phi_control, is_animated, d_upper, d_lower))
+#             # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,self.v_e,psi_e,interfuser_acc,interfuser_steering_rate))
 #             self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
 #             self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels
 #             # self.resize_visualize(pixel_is_certifieds , 'corrected certified pixels', cert=False)
