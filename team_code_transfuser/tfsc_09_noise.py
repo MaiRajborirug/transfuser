@@ -100,8 +100,10 @@ class agent(HybridAgent):
         #     # already convert from (H, W, 3) to (3, 256, 256)
         # ])
         
-        # NOTE: for depth estimation monodepth2 ----
         self.d_std = NOISE # bound
+        
+        """
+        # NOTE: for depth estimation monodepth2 ---------
         model_name = "mono+stereo_1024x320"
         download_model_if_doesnt_exist(model_name)
         encoder_path = os.path.join("models", model_name, "encoder.pth")
@@ -123,7 +125,8 @@ class agent(HybridAgent):
         # tune the value of k
         self.disp_k = 0.36
         self.feed_height = loaded_dict_enc['height']
-        self.feed_width = loaded_dict_enc['width']        
+        self.feed_width = loaded_dict_enc['width']
+        """    
 
         # NOTE: test when turn-off safety certificate
         # self.no_certification_required = np.full((self.camera_height, self.camera_width), True)
@@ -148,15 +151,15 @@ class agent(HybridAgent):
         self.steer_deque = deque([0 for _ in range(10)], maxlen=10)
         
         self.cruise_controller = PIDController(K_P=0.25, K_I=0.5, K_D=0.2, n=20)
-        self.desired_speed = 5.0
+        self.desired_speed = 4.0
         
         # NOTE: for turning controller
         # turn_KI = 0.75
         # turn_KP = 1.25
         # turn_KD = 0.3
-        turn_KI = 0.3
-        turn_KP = 0.3
-        turn_KD = 0.2
+        turn_KI = 0.5
+        turn_KP = 1.0
+        turn_KD = 0.5
         turn_n = 20 # buffer size
         self.turn_controller = PIDController(K_P=turn_KP, K_I=turn_KI, K_D=turn_KD, n=turn_n)
         self.aug_degrees = [0]
@@ -194,7 +197,7 @@ class agent(HybridAgent):
         control = carla.VehicleControl() 
         control.throttle = throttle
         control.brake = brake
-        control.steer = 0.2
+        control.steer = 0.0
 
         self.step +=1
         # print(f"{self.step}, v:{self.v_e:.2f}, a:{self.a_e:.2f}, si:{control_signal:.2f}, th:{throttle:.2f}, brake:{brake:.2f}")
@@ -220,8 +223,10 @@ class agent(HybridAgent):
         is_wp, is_road, is_nonanimated, is_terrain, is_animated, group_label = group_segment(pred_mask)
         self.resize_visualize(group_label, 'segment label', binary_input=False)
         
-        # NOTE: monodepth2 estimation
         self.resize_visualize(self.bgr_, 'input', binary_input=False)  # NOTE: debug attempt
+        
+        """
+        # NOTE: monodepth2 estimation------
         input_image = Image.fromarray(cv2.cvtColor(self.bgr_, cv2.COLOR_BGR2RGB)).convert('RGB')
         original_width, original_height = input_image.size
         input_image_resized = input_image.resize((self.feed_width, self.feed_height), Image.LANCZOS)
@@ -236,7 +241,13 @@ class agent(HybridAgent):
                                                        (original_height, original_width), mode="bilinear", align_corners=False)
         disp_resized_np = disp_resized.squeeze().cpu().numpy()
         distance = self.disp_k / disp_resized_np
+        """
         
+        # NOTE: depth from depth camera
+        depth_bgr = input_data["depth_front"][1][:, :, :3].astype(np.float32)
+        normalized = (depth_bgr[:, :, 0] * 256 * 256 + depth_bgr[:, :, 1] * 256 + depth_bgr[:, :, 2]) 
+        normalized = normalized / (256 * 256* 256 -1) 
+        distance = 1000 * normalized # convert to meters
         
         d_upper = distance * np.exp(self.d_std)
         d_lower = distance * np.exp(-self.d_std)
@@ -455,15 +466,14 @@ class agent(HybridAgent):
                 # steer = np.clip(steer, -1.0, 1.0)
                 
                 # steer mapping 2
-                desire_w_e = self.w_e + self.delta_time * alpha_control # gain
-                desire_rho = desire_w_e / (abs(self.v_e) + 1e5)
+                gain = -13.0 # don't know why negative?
+                desire_w_e = self.w_e + gain * (self.delta_time * alpha_control) # gain
+                desire_rho = desire_w_e / (abs(self.v_e) + 1e-5) # signal too week ~ e-5
                 self.rho_e_deque.append(desire_rho)
                 steer = self.config.m_rs * desire_rho
+                # steer = self.turn_controller.step(steer) # finally we want to have steer ~ 0
                 steer = np.clip(steer, -1.0, 1.0)
-                # breakpoint()
 
-                
-                # NOTE: do the PID on angle
                 
 
                 # # NOTE: map (a, alpha) back to carla control (throttle, steering, break)
@@ -501,7 +511,6 @@ class agent(HybridAgent):
                 #     brake = 1
                 #     steer = 0
                 
-                
                 control.steer = steer
                 # control.throttle = throttle
                 # control.brake = brake
@@ -514,6 +523,7 @@ class agent(HybridAgent):
                 self.nominal_pixel_is_certifieds, self.raw_data = self.alg1_solver_follow.run((self.mu,self.nu,self.v_e,self.w_e,a_control,alpha_control, is_animated, d_upper, d_lower))
                 
                 print(f'a_control: {a_control:.3f}, alpha_control: {alpha_control:.3f}')
+                """
                 breakpoint()
                 self.nominal_pixel_is_certifieds, self.raw_data = self.alg1_solver_follow.run((self.mu,self.nu,self.v_e,self.w_e,a_control,alpha_control, is_animated, d_upper, d_lower))
                 
@@ -580,8 +590,12 @@ class agent(HybridAgent):
                 # Show the plot
                 plt.show()
                 # ------
+                """
                 
-                
+                self.nominal_pixel_is_certifieds = np.logical_or(1-is_wp, self.nominal_pixel_is_certifieds) # remove road pixels
+                H_ = self.nominal_pixel_is_certifieds.shape[0]
+                threshold = int(0.79* H_)
+                self.nominal_pixel_is_certifieds[:threshold,:]=1
                 self.resize_visualize(self.nominal_pixel_is_certifieds, 'target not follow after update', cert=False)
             
                 """

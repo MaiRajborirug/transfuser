@@ -24,8 +24,9 @@ class Algorithm2:
             (a_nom, alpha_nom, certify) = args
             
             # max: 1 - certify(u_t) = 1
+            # but about < 300 pixel determine the cost out ff 460800 pixel -> use that ratio
             # max: (a_nom - a)**2/169.0 + 20*(alpha_nom - alpha)**2/25.0 =1
-            return (1 - certify(u_t))  + 0.1 * ((a_nom - a)**2/169.0 + 20*(alpha_nom - alpha)**2/25.0) 
+            return (460800/300)*(1 - certify(u_t))  + 0.1 * ((a_nom - a)**2/169.0 + (alpha_nom - alpha)**2/25.0) 
 
         before_op = time.time()
         (a_nom, alpha_nom, certify) = args
