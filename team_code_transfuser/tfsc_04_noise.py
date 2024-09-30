@@ -26,11 +26,11 @@ from optical_flow import optical_flow
 from rgb_seg import UNet, Unetpad, group_segment
 
 
-from alg1_pycuda_yaguang import Algorithm1 #
+from alg1_pr import Algorithm1 #
 from alg2 import Algorithm2
 from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
 # NOTE: adjust submission_agent
-from tf_2404_noise import HybridAgent
+from tf_04_noise import HybridAgent
 # NOTE: get noise level
 NOISE = float(os.environ.get('NOISE')) # to run step -> d_std
 from optical_flow import OpticalFlowVisualizer
@@ -130,7 +130,8 @@ class agent(HybridAgent):
         # self.certification_offset = np.full((self.camera_height, self.camera_width), -1000000)
 
         # NOTE: define safety certificate solver
-        self.alg1_solver = Algorithm1(self.focal_len, (self.camera_width, self.camera_height), self.X, self.Y, self.certification_offset)
+        self.cuda_path = '/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_objavoid.cu' # obstacle avoidance path
+        self.alg1_solver = Algorithm1(self.focal_len, (self.camera_width, self.camera_height), self.X, self.Y, self.certification_offset, self.cuda_path)
         
         self.alg2_solver = Algorithm2()
         self.last_w_e = None  # angular velocity in z-axis
@@ -153,6 +154,8 @@ class agent(HybridAgent):
         # print("nominal a: {}, nominal w_e: {}".format(control.throttle, control.steer))
         delta_time = CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
         self._step += 1
+        print(f'{self.step}, th{control.throttle:.2f}, st{control.steer:.2f}, br{control.brake:.2f}')
+        return control
         
         print("transfuser raw throttle: {:.2%}, brake: {}, steer: {:.3%}".format(control.throttle, control.brake, control.steer))
         
@@ -174,7 +177,7 @@ class agent(HybridAgent):
         pred_mask = self._distort(semantic_front, value=5, n_labels=24)
         
         # NOTE: CARLA segmentation, initialize gt segmentation
-        is_road, is_nonanimated, is_terrain, is_animated, group_label = group_segment(pred_mask)
+        is_wp, is_road, is_nonanimated, is_terrain, is_animated, group_label = group_segment(pred_mask)
         self.resize_visualize(group_label, 'segment label', binary_input=False)
         
         # NOTE: monodepth2 estimation

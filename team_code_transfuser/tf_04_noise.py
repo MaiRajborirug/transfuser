@@ -86,27 +86,27 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
 
         # Load model files
         self.nets = []
-        # self.model_count = 0 # Counts how many models are in our ensemble
-        # for file in os.listdir(path_to_conf_file):
-        #     if file.endswith(".pth"):
-        #         self.model_count += 1
-        #         print(os.path.join(path_to_conf_file, file))
-        #         net = LidarCenterNet(self.config, 'cuda', self.backbone, image_architecture, lidar_architecture, use_velocity)
-        #         if(self.config.sync_batch_norm == True):
-        #             net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(net) # Model was trained with Sync. Batch Norm. Need to convert it otherwise parameters will load incorrectly.
-        #         state_dict = torch.load(os.path.join(path_to_conf_file, file), map_location='cuda:0')
-        #         new_state_dict = {}
-        #         for (k, v) in state_dict.items():
-        #             if k.startswith('module.'):
-        #                 new_state_dict[k[7:]] = v
-        #             else:
-        #                 new_state_dict[k] = v
-        #         print(new_state_dict['_model.image_encoder.features.stem.conv.weight'][0][0][0]) # test
-        #         net.load_state_dict(new_state_dict, strict=False)
-        #         print(net._model.image_encoder.features.stem.conv.weight[0][0][0]) # test
-        #         net.cuda()
-        #         net.eval()
-        #         self.nets.append(net)
+        self.model_count = 0 # Counts how many models are in our ensemble
+        for file in os.listdir(path_to_conf_file):
+            if file.endswith(".pth"):
+                self.model_count += 1
+                print(os.path.join(path_to_conf_file, file))
+                net = LidarCenterNet(self.config, 'cuda', self.backbone, image_architecture, lidar_architecture, use_velocity)
+                if(self.config.sync_batch_norm == True):
+                    net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(net) # Model was trained with Sync. Batch Norm. Need to convert it otherwise parameters will load incorrectly.
+                state_dict = torch.load(os.path.join(path_to_conf_file, file), map_location='cuda:0')
+                new_state_dict = {}
+                for (k, v) in state_dict.items():
+                    if k.startswith('module.'):
+                        new_state_dict[k[7:]] = v
+                    else:
+                        new_state_dict[k] = v
+                print(new_state_dict['_model.image_encoder.features.stem.conv.weight'][0][0][0]) # test
+                net.load_state_dict(new_state_dict, strict=False)
+                print(net._model.image_encoder.features.stem.conv.weight[0][0][0]) # test
+                net.cuda()
+                net.eval()
+                self.nets.append(net)
 
 
         self.stuck_detector = 0

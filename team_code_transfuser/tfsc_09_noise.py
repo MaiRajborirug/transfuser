@@ -1,5 +1,3 @@
-
-
 import os
 import json
 import datetime
@@ -32,7 +30,7 @@ from alg1_pr import Algorithm1 #
 from alg2 import Algorithm2
 from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
 # NOTE: adjust submission_agent
-from tf_2404_noise import HybridAgent
+from tf_04_noise import HybridAgent
 # NOTE: get noise level
 NOISE = float(os.environ.get('NOISE')) # to run step -> d_std
 from optical_flow import OpticalFlowVisualizer
@@ -82,8 +80,8 @@ class agent(HybridAgent):
         # NOTE: for certificate bound
         # self._set_certificate_bound(x_deg_close=55, x_deg_far=35, y_deg=12, decay_temp=1.19, offset_scale=0.004)
         # self.certify_threshold = 0.987
-        self._set_certificate_bound(x_deg_close=45, x_deg_far=35, y_deg=12, decay_temp=1.19, offset_scale=0.004)
-        self.certify_threshold = 0.989
+        self._set_certificate_bound(x_deg_close=42, x_deg_far=35, y_deg=12, decay_temp=1.19, offset_scale=0.004)
+        self.certify_threshold = 0.985
         
         # NOTE: for optical flow
         self.optical_flow = optical_flow(self.camera_height, self.camera_width, self.meters_per_pixel_x, self.meters_per_pixel_y)
@@ -137,7 +135,7 @@ class agent(HybridAgent):
         self.alg1_solver = Algorithm1(self.focal_len, (self.camera_width, self.camera_height), self.X, self.Y, self.certification_offset, self.cuda_path)
         self.cuda_path_follow = '/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_tarfollow.cu' # obstacle avoidance path
         self.alg1_solver_follow = Algorithm1(self.focal_len, (self.camera_width, self.camera_height), self.X, self.Y, self.certification_offset, self.cuda_path_follow)
-        
+        self.alg2_solver = Algorithm2()
         self.alg2_solver_follow = Algorithm2()
         
         
@@ -177,120 +175,126 @@ class agent(HybridAgent):
         returns: control 
         see https://carla.readthedocs.io/en/latest/python_api/#carlavehiclecontrol
         """
-        # NOTE: for cruise controller -------
-        self.a_e = input_data["imu"][1][0]
-        self.v_e = np.maximum(0,input_data["speed"][1]["speed"])
-        delta = self.desired_speed - self.v_e
-        # delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-        control_signal = self.cruise_controller.step(delta)
-        # throttle = np.clip(throttle+0.15, 0.0, 0.75)
-        if control_signal > 0:
-            throttle = np.clip(control_signal, 0.0, 1.0)
-            brake = 0.0
-        elif control_signal > -1.: # weak signal -> slow down not exactly brake
-            throttle = 0.0
-            brake = 0.0
-        else: # brake
-            throttle = 0.0
-            brake = np.clip(-0.1*control_signal, 0.0, 1.0)
+        ##
         
-        control = carla.VehicleControl() 
-        control.throttle = throttle
-        control.brake = brake
-        control.steer = 0.0
+        # # NOTE: for cruise controller -------
+        # self.a_e = input_data["imu"][1][0]
+        # self.v_e = np.maximum(0,input_data["speed"][1]["speed"])
+        # delta = self.desired_speed - self.v_e
+        # # delta = np.clip(max(0, self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        # control_signal = self.cruise_controller.step(delta)
+        # # throttle = np.clip(throttle+0.15, 0.0, 0.75)
+        # if control_signal > 0:
+        #     throttle = np.clip(control_signal, 0.0, 1.0)
+        #     brake = 0.0
+        # elif control_signal > -1.: # weak signal -> slow down not exactly brake
+        #     throttle = 0.0
+        #     brake = 0.0
+        # else: # brake
+        #     throttle = 0.0
+        #     brake = np.clip(-0.1*control_signal, 0.0, 1.0)
+        
+        # control = carla.VehicleControl() 
+        # control.throttle = throttle
+        # control.brake = brake
+        # control.steer = 0.0
 
-        self.step +=1
-        # print(f"{self.step}, v:{self.v_e:.2f}, a:{self.a_e:.2f}, si:{control_signal:.2f}, th:{throttle:.2f}, brake:{brake:.2f}")
-        
         #------ start old algorithm -----
         delta_time = CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
         self._step += 1
+        self.step +=1
+        control = super().run_step(input_data, timestamp)
+        print(f'{self.step}, th{control.throttle:.2f}, st{control.steer:.2f}, br{control.brake:.2f}')
+        return control
         
-        # for fast testing, since the vehicle only run after step ~ 50, we can skip the first 50 steps
-        if self._step < 60: # Great success!
-            return control
-                
-        
-        # NOTE: optical flow output
-        self.bgr_ = input_data["rgb_front"][1][:, :, :3]  # rgb to rgb_front
-        self.optical_flow_output = self.optical_flow.predict(self.bgr_, self.delta_time)
-        
-        # NOTE: gt segmentation
-        pred_mask = input_data["semantics_front"][1][:, :, 2] # semantic to semantic_front
-        # pred_mask = self._distort(pred_mask, value=5, n_labels=24) # remove it for target following
-        
-        # NOTE: CARLA segmentation, initialize gt segmentation # edit 09/27 add is_wp
-        is_wp, is_road, is_nonanimated, is_terrain, is_animated, group_label = group_segment(pred_mask)
-        self.resize_visualize(group_label, 'segment label', binary_input=False)
-        
-        self.resize_visualize(self.bgr_, 'input', binary_input=False)  # NOTE: debug attempt
-        
-        """
-        # NOTE: monodepth2 estimation------
-        input_image = Image.fromarray(cv2.cvtColor(self.bgr_, cv2.COLOR_BGR2RGB)).convert('RGB')
-        original_width, original_height = input_image.size
-        input_image_resized = input_image.resize((self.feed_width, self.feed_height), Image.LANCZOS)
-        input_image_pytorch = transforms.ToTensor()(input_image_resized).unsqueeze(0)
-        with torch.no_grad():
-            features = self.encoder(input_image_pytorch)
-            outputs = self.depth_decoder(features)
-        disp = outputs[("disp", 0)]
-        arr = disp.squeeze().detach().cpu().numpy()
-        # cv2.imshow("distance", arr)
-        disp_resized = torch.nn.functional.interpolate(disp,
-                                                       (original_height, original_width), mode="bilinear", align_corners=False)
-        disp_resized_np = disp_resized.squeeze().cpu().numpy()
-        distance = self.disp_k / disp_resized_np
-        """
-        
-        # NOTE: depth from depth camera
-        depth_bgr = input_data["depth_front"][1][:, :, :3].astype(np.float32)
-        normalized = (depth_bgr[:, :, 0] * 256 * 256 + depth_bgr[:, :, 1] * 256 + depth_bgr[:, :, 2]) 
-        normalized = normalized / (256 * 256* 256 -1) 
-        distance = 1000 * normalized # convert to meters
-        
-        d_upper = distance * np.exp(self.d_std)
-        d_lower = distance * np.exp(-self.d_std)
-        
-        # NOTE: for certificate and control mapping
 
-        # NOTE: require parameter for both target following and obstacle avoidance        
-        self.w_e_deque.append(input_data['imu'][1][5])
-        self.w_e = np.average(self.w_e_deque, weights=self.w_e_weight)
-        self.v_e = input_data['speed'][1]['speed']
-        self.v_e_deque.append(self.v_e)
-        self.alpha_e = (np.average(self.w_e_deque, weights=self.w_e_weight) - np.average(self.w_e_deque, weights=self.w_e_weight2)) / self.delta_time
-        self.a_e = input_data["imu"][1][0] # accelaration in vehicle direction (m/s^2)
-        self.rho_e_deque.append(input_data['imu'][1][5]/(abs(input_data['speed'][1]['speed'])+1e-3)) # add 1e-2 to avoid division by zero, rho is error when the car hitting
-        control_acc = self.a_e
-        control_steering_rate = self.alpha_e
-        
-        
-        # print(f"v:{self.v_e_deque[-1]:.3f}, v-v:{(self.v_e_deque[-1]-self.v_e_deque[-2])/self.delta_time:.3f}, a:{self.a_e:.3f}, rho:{self.rho_e_deque[-1]:.3f}")
-
-        # # might require to be remove
-        # if self.v_e < 0.2 and control.brake > 0:
-        #     delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-        #     _ = self.throttle_controller.step(delta)
-        #     cv2.waitKey(1)
+        # # for fast testing, since the vehicle only run after step ~ 50, we can skip the first 50 steps
+        # if self._step < 60:
         #     return control
         
-        # convert optical flow to mu and nu
-        self.mu = self.optical_flow_output[:, :, 0]
-        self.nu =self.optical_flow_output[:, :, 1]
-        self.mu = self.mu.astype(np.float32)
-        self.nu =self.nu.astype(np.float32)
+        
+
+                
+        
+        # # NOTE: optical flow output
+        # self.bgr_ = input_data["rgb_front"][1][:, :, :3]  # rgb to rgb_front
+        # self.optical_flow_output = self.optical_flow.predict(self.bgr_, self.delta_time)
+        
+        # # NOTE: gt segmentation
+        # pred_mask = input_data["semantics_front"][1][:, :, 2] # semantic to semantic_front
+        # # pred_mask = self._distort(pred_mask, value=5, n_labels=24) # remove it for target following
+        
+        # # NOTE: CARLA segmentation, initialize gt segmentation # edit 09/27 add is_wp
+        # is_wp, is_road, is_nonanimated, is_terrain, is_animated, group_label = group_segment(pred_mask)
+        # self.resize_visualize(group_label, 'segment label', binary_input=False)
+        
+        # self.resize_visualize(self.bgr_, 'input', binary_input=False)  # NOTE: debug attempt
+        
+        # """
+        # # NOTE: monodepth2 estimation------
+        # input_image = Image.fromarray(cv2.cvtColor(self.bgr_, cv2.COLOR_BGR2RGB)).convert('RGB')
+        # original_width, original_height = input_image.size
+        # input_image_resized = input_image.resize((self.feed_width, self.feed_height), Image.LANCZOS)
+        # input_image_pytorch = transforms.ToTensor()(input_image_resized).unsqueeze(0)
+        # with torch.no_grad():
+        #     features = self.encoder(input_image_pytorch)
+        #     outputs = self.depth_decoder(features)
+        # disp = outputs[("disp", 0)]
+        # arr = disp.squeeze().detach().cpu().numpy()
+        # # cv2.imshow("distance", arr)
+        # disp_resized = torch.nn.functional.interpolate(disp,
+        #                                                (original_height, original_width), mode="bilinear", align_corners=False)
+        # disp_resized_np = disp_resized.squeeze().cpu().numpy()
+        # distance = self.disp_k / disp_resized_np
+        # """
+        
+        # # NOTE: depth from depth camera
+        # depth_bgr = input_data["depth_front"][1][:, :, :3].astype(np.float32)
+        # normalized = (depth_bgr[:, :, 0] * 256 * 256 + depth_bgr[:, :, 1] * 256 + depth_bgr[:, :, 2]) 
+        # normalized = normalized / (256 * 256* 256 -1) 
+        # distance = 1000 * normalized # convert to meters
+        
+        # d_upper = distance * np.exp(self.d_std)
+        # d_lower = distance * np.exp(-self.d_std)
+        
+        # # NOTE: for certificate and control mapping
+
+        # # NOTE: require parameter for both target following and obstacle avoidance        
+        # self.w_e_deque.append(input_data['imu'][1][5])
+        # self.w_e = np.average(self.w_e_deque, weights=self.w_e_weight)
+        # self.v_e = input_data['speed'][1]['speed']
+        # self.v_e_deque.append(self.v_e)
+        # self.alpha_e = (np.average(self.w_e_deque, weights=self.w_e_weight) - np.average(self.w_e_deque, weights=self.w_e_weight2)) / self.delta_time
+        # self.a_e = input_data["imu"][1][0] # accelaration in vehicle direction (m/s^2)
+        # self.rho_e_deque.append(input_data['imu'][1][5]/(abs(input_data['speed'][1]['speed'])+1e-3)) # add 1e-2 to avoid division by zero, rho is error when the car hitting
+        # control_acc = self.a_e
+        # control_steering_rate = self.alpha_e
+        
+        
+        # # print(f"v:{self.v_e_deque[-1]:.3f}, v-v:{(self.v_e_deque[-1]-self.v_e_deque[-2])/self.delta_time:.3f}, a:{self.a_e:.3f}, rho:{self.rho_e_deque[-1]:.3f}")
+
+        # # # might require to be remove
+        # # if self.v_e < 0.2 and control.brake > 0:
+        # #     delta = np.clip(max(0, self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        # #     _ = self.throttle_controller.step(delta)
+        # #     cv2.waitKey(1)
+        # #     return control
+        
+        # # convert optical flow to mu and nu
+        # self.mu = self.optical_flow_output[:, :, 0]
+        # self.nu =self.optical_flow_output[:, :, 1]
+        # self.mu = self.mu.astype(np.float32)
+        # self.nu =self.nu.astype(np.float32)
                 
 
-        # # NOTE: obstacle avoidance----------
-        # self.alg2_solver.alpha_bounds = ((-steering_limit-self.w_e)/self.delta_time,(steering_limit-self.w_e)/self.delta_time)        
+        # # NOTE: obstacle avoidance----------       
         # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run(( self.mu,self.nu,self.v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
         # self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
         # self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels        
         # self.resize_visualize(self.nominal_pixel_is_certifieds, 'white = certified pixels')
         
         # if self.nominal_pixel_is_certifieds.sum() == self.nominal_pixel_is_certifieds.size: # > self.certify_threshold:
-        #     delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        #     delta = np.clip(math.sqrt(abs(self.v_e) + 1e-5) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
         #     _ = self.throttle_controller.step(delta)
 
         
@@ -330,38 +334,50 @@ class agent(HybridAgent):
         #         # (a_control, alpha_control) = res     
         #         (a_control, alpha_control) = res
         #         # print("certified control action: ", a_control, alpha_control)
+                
+        #         # NOTE: steer gain
+        #         gain = +1.0 # don't know why negative? 
 
         #         # NOTE: map (a, alpha) back to carla control (throttle, steering, break)
-        #         if abs(a_control) < 2 * abs(alpha_control) * self.turning_radius: # prioritize turning arbitary comparison
-        #             # print('sc case 1')
+        #         if (abs(a_control) < 2 * abs(alpha_control) * self.turning_radius) and (a_control > -1): # prioritize turning arbitary comparison
+        #             print('sc case 1')
         #             # throttle mapping
         #             a_control = control_acc # before SC 2              
-        #             delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        #             delta = np.clip(math.sqrt(abs(self.v_e) + 1e-5) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
         #             throttle = self.throttle_controller.step(delta)
         #             throttle = np.clip(throttle+0.15, 0.0, 0.75)
         #             # throttle = np.maximum(control.throttle /2, 0.25)
         #             brake = 0
                     
-        #             # steer mapping
-        #             desire_w = self.w_e + self.delta_time * alpha_control
-        #             # print('change in alpha', self.delta_time * alpha_control)
-        #             steer = self._calculate_steer(self.v_e, desire_w)
-                
-        #         elif a_control > -0.2: # prioritize throttle
-        #             # print('sc case 2')
-        #             # throttle mapping           
-        #             delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-        #             throttle = self.throttle_controller.step(delta)
-        #             throttle = np.clip(throttle, 0.0, 0.75)
-        #             brake = 0
+        #             # # steer mapping -> need to fix
+        #             steer = control.steer
                     
-        #             # steer mapping
-        #             desire_w = self.w_e + self.delta_time * alpha_control
-        #             # print('change in alpha', self.delta_time * alpha_control)
-        #             steer = self._calculate_steer(self.v_e, desire_w)
+        #             # desire_w_e = self.w_e + gain * (self.delta_time * alpha_control) # gain
+        #             # desire_rho = desire_w_e / (abs(self.v_e) + 1e-5) # signal too week ~ e-5
+        #             # self.rho_e_deque.append(desire_rho)
+        #             # steer = self.config.m_rs * desire_rho
+        #             # # steer = self.turn_controller.step(steer) # finally we want to have steer ~ 0
+        #             # steer = np.clip(steer, -1.0, 1.0)
+                    
+        #             # desire_w = self.w_e + self.delta_time * alpha_control
+        #             # # print('change in alpha', self.delta_time * alpha_control)
+        #             # steer = self._calculate_steer(self.v_e, desire_w)
+                
+        #         # elif a_control > -0.2: # prioritize throttle
+        #         #     print('sc case 2')
+        #         #     # throttle mapping           
+        #         #     delta = np.clip(max(0, self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        #         #     throttle = self.throttle_controller.step(delta)
+        #         #     throttle = np.clip(throttle, 0.0, 0.75)
+        #         #     brake = 0
+                    
+        #         #     # steer mapping
+        #         #     desire_w = self.w_e + self.delta_time * alpha_control
+        #         #     # print('change in alpha', self.delta_time * alpha_control)
+        #         #     steer = self._calculate_steer(self.v_e, desire_w)
 
         #         else:
-        #             # print('sc case 3')
+        #             print('sc case 3')
         #             throttle = 0
         #             brake = 1
         #             steer = 0
@@ -369,8 +385,7 @@ class agent(HybridAgent):
         #         control.steer = steer
         #         control.throttle = np.minimum(throttle, control.throttle)
         #         control.brake = np.maximum(brake, control.brake)
-        #         print('object avoid: throttle: {:.2%}, brake: {}, steer: {:.3%}'.format(control.throttle, control.brake, control.steer))
-                
+        #         print(f'avoid, a_e:{self.a_e:.2f}, a_propose:{a_control:.2f}, th:{control.throttle:.2f}, brake:{control.brake:.2f}, steer:{control.steer:.2f}')
         #         self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,self.v_e,self.w_e,a_control,alpha_control, is_animated, d_upper, d_lower))
         #         # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,self.v_e,w_e,interfuser_acc,interfuser_steering_rate))
         #         self.nominal_pixel_is_certifieds = np.logical_or(is_road, self.nominal_pixel_is_certifieds) # remove road pixels
@@ -384,272 +399,273 @@ class agent(HybridAgent):
         
         
         
-        # NOTE: target following -----    
-        self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((self.mu,self.nu,self.v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
-        self.nominal_pixel_is_certifieds = np.logical_or(1-is_wp, self.nominal_pixel_is_certifieds) # check only at wp
-        H_ = self.nominal_pixel_is_certifieds.shape[0]
-        threshold = int(0.79* H_)
-        self.nominal_pixel_is_certifieds[:threshold,:]=1    
+        # # NOTE: target following -----    
+        # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((self.mu,self.nu,self.v_e,self.w_e,control_acc,control_steering_rate, is_animated, d_upper, d_lower))
+        # self.nominal_pixel_is_certifieds = np.logical_or(1-is_wp, self.nominal_pixel_is_certifieds) # check only at wp
+        # H_ = self.nominal_pixel_is_certifieds.shape[0]
+        # threshold = int(0.79* H_)
+        # self.nominal_pixel_is_certifieds[:threshold,:]=1    
         
         
-        # self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels      
-        self.resize_visualize(self.nominal_pixel_is_certifieds, 'target not follow before update')
+        # # self.nominal_pixel_is_certifieds = np.logical_or(self.nominal_pixel_is_certifieds, self.no_certification_required) # remove sky pixels      
+        # self.resize_visualize(self.nominal_pixel_is_certifieds, 'target not follow before update')
         
-        if self.nominal_pixel_is_certifieds.sum() == self.nominal_pixel_is_certifieds.size: #> self.certify_threshold:
-            delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-            _ = self.throttle_controller.step(delta)
+        # if self.nominal_pixel_is_certifieds.sum() == self.nominal_pixel_is_certifieds.size: #> self.certify_threshold:
+        #     delta = np.clip(max(0, self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        #     _ = self.throttle_controller.step(delta)
 
         
-        else:
-            nominal_control = (self.a_e, self.alpha_e)
-            # print("nominal control action: {:.3%}, {:.3%}".format(control_acc, control_steering_rate))
-            a_e = self.a_e
-            alpha_e = self.alpha_e
+        # else:
+        #     nominal_control = (self.a_e, self.alpha_e)
+        #     # print("nominal control action: {:.3%}, {:.3%}".format(control_acc, control_steering_rate))
+        #     a_e = self.a_e
+        #     alpha_e = self.alpha_e
             
-            def certify_control_action(control_action):
-                a_e, alpha_e = control_action
-                # print("certifying:", self.a_e, self.alpha_e)
-                pixel_is_certifieds, _ = self.alg1_solver_follow.run((self.mu, self.nu, self.v_e, self.w_e, a_e, alpha_e, is_animated, d_upper, d_lower))
+        #     def certify_control_action(control_action):
+        #         a_e, alpha_e = control_action
+        #         # print("certifying:", self.a_e, self.alpha_e)
+        #         pixel_is_certifieds, _ = self.alg1_solver_follow.run((self.mu, self.nu, self.v_e, self.w_e, a_e, alpha_e, is_animated, d_upper, d_lower))
 
 
-                # if (self.v_e > -0.001 and self.v_e < 0.001):
-                #     print("certified due to being stationary")
-                #     return True
+        #         # if (self.v_e > -0.001 and self.v_e < 0.001):
+        #         #     print("certified due to being stationary")
+        #         #     return True
 
-                # the pixel is automatically certified if it is 
-                # the road (in other words, not obstacle)
-                pixel_is_certifieds = np.logical_or(1-is_wp, pixel_is_certifieds)
+        #         # the pixel is automatically certified if it is 
+        #         # the road (in other words, not obstacle)
+        #         pixel_is_certifieds = np.logical_or(1-is_wp, pixel_is_certifieds)
                 
-                # limit focus region
-                H_ = pixel_is_certifieds.shape[0]
-                threshold = int(0.79* H_)
-                pixel_is_certifieds[:threshold,:]=1
+        #         # limit focus region
+        #         H_ = pixel_is_certifieds.shape[0]
+        #         threshold = int(0.79* H_)
+        #         pixel_is_certifieds[:threshold,:]=1
 
-                # # we only want to check certification for those regions we care about
-                # pixel_is_certifieds = np.logical_or(pixel_is_certifieds, self.no_certification_required)
+        #         # # we only want to check certification for those regions we care about
+        #         # pixel_is_certifieds = np.logical_or(pixel_is_certifieds, self.no_certification_required)
 
-                # print("is certified: ", pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold)
-                # cv_img2 = np.repeat(pixel_is_certifieds[:, :, np.newaxis].astype(np.uint8) * 255, 3, axis=2)
-                # cv2.putText(cv_img2, step_text, position, font, font_scale, color, thickness)
-                # cv2.imshow("certified, post mask", cv_img2)
+        #         # print("is certified: ", pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold)
+        #         # cv_img2 = np.repeat(pixel_is_certifieds[:, :, np.newaxis].astype(np.uint8) * 255, 3, axis=2)
+        #         # cv2.putText(cv_img2, step_text, position, font, font_scale, color, thickness)
+        #         # cv2.imshow("certified, post mask", cv_img2)
             
                 
-                # return pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold
-                return pixel_is_certifieds.sum() / pixel_is_certifieds.size
+        #         # return pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold
+        #         return pixel_is_certifieds.sum() / pixel_is_certifieds.size
         
-            res = self.alg2_solver_follow.run(nominal_control, certify_control_action)
-            if res is not None:
-                # (a_control, alpha_control) = res     
-                (a_control, alpha_control) = res
-                print(f"alpha_e before: {self.alpha_e:.3f}, alpha_e after:{alpha_control:.3f}")
-                # print("certified control action: ", a_control, alpha_control)
+        #     res = self.alg2_solver_follow.run(nominal_control, certify_control_action)
+        #     if res is not None:
+        #         # (a_control, alpha_control) = res     
+        #         (a_control, alpha_control) = res
+        #         print(f"follow: alpha_e before: {self.alpha_e:.3f}, alpha_e after:{alpha_control:.3f}")
+        #         # print("certified control action: ", a_control, alpha_control)
                 
-                # a_control = control_acc # before SC 2              
-                # delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-                # throttle = self.throttle_controller.step(delta)
-                # throttle = np.clip(throttle, 0.4, 0.75)
-                # throttle = np.maximum(control.throttle /2, 0.25)
-                # brake = 0.0
+        #         # a_control = control_acc # before SC 2              
+        #         # delta = np.clip(max(0, self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        #         # throttle = self.throttle_controller.step(delta)
+        #         # throttle = np.clip(throttle, 0.4, 0.75)
+        #         # throttle = np.maximum(control.throttle /2, 0.25)
+        #         # brake = 0.0
                 
-                # # steer mapping
-                # desire_w = self.w_e + self.delta_time * alpha_control # gain steer
-                # # print('change in alpha', self.delta_time * alpha_control)
-                # steer = self._calculate_steer(self.v_e, desire_w)
+        #         # # steer mapping
+        #         # desire_w = self.w_e + self.delta_time * alpha_control # gain steer
+        #         # # print('change in alpha', self.delta_time * alpha_control)
+        #         # steer = self._calculate_steer(self.v_e, desire_w)
                 
-                # COM_length = 1.75
-                # wheel_length = 2.9
-                # R = np.maximum(self.v_e / abs(self.w_e), self.turning_radius)
-                # print(f'R: {R}, speed: {self.v_e}, omega_z: {self.w_e}')
-                # steer = math.atan(math.sqrt(wheel_length * wheel_length / (R * R - COM_length * COM_length))) * np.sign(self.w_e)
-                # steer = np.clip(steer,-1,1)
-                # steer = self.turn_controller.step(alpha_control * self.delta_time)
-                # steer = np.clip(steer, -1.0, 1.0)
+        #         # COM_length = 1.75
+        #         # wheel_length = 2.9
+        #         # R = np.maximum(self.v_e / abs(self.w_e), self.turning_radius)
+        #         # print(f'R: {R}, speed: {self.v_e}, omega_z: {self.w_e}')
+        #         # steer = math.atan(math.sqrt(wheel_length * wheel_length / (R * R - COM_length * COM_length))) * np.sign(self.w_e)
+        #         # steer = np.clip(steer,-1,1)
+        #         # steer = self.turn_controller.step(alpha_control * self.delta_time)
+        #         # steer = np.clip(steer, -1.0, 1.0)
                 
-                # steer mapping 2
-                gain = -13.0 # don't know why negative?
-                desire_w_e = self.w_e + gain * (self.delta_time * alpha_control) # gain
-                desire_rho = desire_w_e / (abs(self.v_e) + 1e-5) # signal too week ~ e-5
-                self.rho_e_deque.append(desire_rho)
-                steer = self.config.m_rs * desire_rho
-                # steer = self.turn_controller.step(steer) # finally we want to have steer ~ 0
-                steer = np.clip(steer, -1.0, 1.0)
+        #         # NOTE: steer gain
+        #         gain = -11.0 # don't know why negative? 
+        #         # steer mapping 2
+        #         desire_w_e = self.w_e + gain * (self.delta_time * alpha_control) # gain
+        #         desire_rho = desire_w_e / (abs(self.v_e) + 1e-5) # signal too week ~ e-5
+        #         self.rho_e_deque.append(desire_rho)
+        #         steer = self.config.m_rs * desire_rho
+        #         # steer = self.turn_controller.step(steer) # finally we want to have steer ~ 0
+        #         steer = np.clip(steer, -1.0, 1.0)
 
                 
 
-                # # NOTE: map (a, alpha) back to carla control (throttle, steering, break)
-                # if abs(a_control) < 2 * abs(alpha_control) * self.turning_radius: # prioritize turning arbitary comparison
-                #     # print('sc case 1')
-                #     # throttle mapping
-                #     a_control = control_acc # before SC 2              
-                #     delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-                #     throttle = self.throttle_controller.step(delta)
-                #     throttle = np.clip(throttle+0.15, 0.0, 0.75)
-                #     # throttle = np.maximum(control.throttle /2, 0.25)
-                #     brake = 0
+        #         # # NOTE: map (a, alpha) back to carla control (throttle, steering, break)
+        #         # if abs(a_control) < 2 * abs(alpha_control) * self.turning_radius: # prioritize turning arbitary comparison
+        #         #     # print('sc case 1')
+        #         #     # throttle mapping
+        #         #     a_control = control_acc # before SC 2              
+        #         #     delta = np.clip(max(0, self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        #         #     throttle = self.throttle_controller.step(delta)
+        #         #     throttle = np.clip(throttle+0.15, 0.0, 0.75)
+        #         #     # throttle = np.maximum(control.throttle /2, 0.25)
+        #         #     brake = 0
                     
-                #     # steer mapping
-                #     desire_w = self.w_e + self.delta_time * alpha_control
-                #     # print('change in alpha', self.delta_time * alpha_control)
-                #     steer = self._calculate_steer(self.v_e, desire_w)
+        #         #     # steer mapping
+        #         #     desire_w = self.w_e + self.delta_time * alpha_control
+        #         #     # print('change in alpha', self.delta_time * alpha_control)
+        #         #     steer = self._calculate_steer(self.v_e, desire_w)
                 
-                # elif a_control > -0.2: # prioritize throttle
-                #     # print('sc case 2')
-                #     # throttle mapping           
-                #     delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-                #     throttle = self.throttle_controller.step(delta)
-                #     throttle = np.clip(throttle, 0.0, 0.75)
-                #     brake = 0
+        #         # elif a_control > -0.2: # prioritize throttle
+        #         #     # print('sc case 2')
+        #         #     # throttle mapping           
+        #         #     delta = np.clip(max(0, self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+        #         #     throttle = self.throttle_controller.step(delta)
+        #         #     throttle = np.clip(throttle, 0.0, 0.75)
+        #         #     brake = 0
                     
-                #     # steer mapping
-                #     desire_w = self.w_e + self.delta_time * alpha_control
-                #     # print('change in alpha', self.delta_time * alpha_control)
-                #     steer = self._calculate_steer(self.v_e, desire_w)
+        #         #     # steer mapping
+        #         #     desire_w = self.w_e + self.delta_time * alpha_control
+        #         #     # print('change in alpha', self.delta_time * alpha_control)
+        #         #     steer = self._calculate_steer(self.v_e, desire_w)
 
-                # else:
-                #     # print('sc case 3')
-                #     throttle = 0
-                #     brake = 1
-                #     steer = 0
+        #         # else:
+        #         #     # print('sc case 3')
+        #         #     throttle = 0
+        #         #     brake = 1
+        #         #     steer = 0
                 
-                control.steer = steer
-                # control.throttle = throttle
-                # control.brake = brake
+        #         control.steer = steer
+        #         control.throttle = np.clip(control.throttle+0.15, 0.0, 0.75)
+        #         # control.brake = brake
 
-                # control.steer = steer
-                # control.throttle = np.minimum(throttle, control.throttle)
-                # control.brake = np.maximum(brake, control.brake)
+        #         # control.steer = steer
+        #         # control.throttle = np.minimum(throttle, control.throttle)
+        #         # control.brake = np.maximum(brake, control.brake)
 
-                print(f'step {self._step}, w_e:{self.w_e:.3e} old_alpha:{self.alpha_e:.3f}, new_alpha: {alpha_control:.3f}, steer: {steer:.3f}')
-                self.nominal_pixel_is_certifieds, self.raw_data = self.alg1_solver_follow.run((self.mu,self.nu,self.v_e,self.w_e,a_control,alpha_control, is_animated, d_upper, d_lower))
+        #         print(f'step {self._step}, w_e:{self.w_e:.3e} old_alpha:{self.alpha_e:.3f}, new_alpha: {alpha_control:.3f}, th:{control.throttle}, steer: {steer:.3f}')
+        #         self.nominal_pixel_is_certifieds, self.raw_data = self.alg1_solver_follow.run((self.mu,self.nu,self.v_e,self.w_e,a_control,alpha_control, is_animated, d_upper, d_lower))
                 
-                print(f'a_control: {a_control:.3f}, alpha_control: {alpha_control:.3f}')
-                """
-                breakpoint()
-                self.nominal_pixel_is_certifieds, self.raw_data = self.alg1_solver_follow.run((self.mu,self.nu,self.v_e,self.w_e,a_control,alpha_control, is_animated, d_upper, d_lower))
+        #         print(f'a_control: {a_control:.3f}, alpha_control: {alpha_control:.3f}, a_e:{self.a_e:.3f}')
+        #         """
+        #         breakpoint()
+        #         self.nominal_pixel_is_certifieds, self.raw_data = self.alg1_solver_follow.run((self.mu,self.nu,self.v_e,self.w_e,a_control,alpha_control, is_animated, d_upper, d_lower))
                 
-                # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((self.mu,self.nu,self.v_e,w_e,interfuser_acc,interfuser_steering_rate))
-                self.nominal_pixel_is_certifieds = np.logical_or(1-is_wp, self.nominal_pixel_is_certifieds) # remove road pixels
-                H_ = self.nominal_pixel_is_certifieds.shape[0]
-                threshold = int(0.79* H_)
-                self.nominal_pixel_is_certifieds[:threshold,:]=1
+        #         # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver_follow.run((self.mu,self.nu,self.v_e,w_e,interfuser_acc,interfuser_steering_rate))
+        #         self.nominal_pixel_is_certifieds = np.logical_or(1-is_wp, self.nominal_pixel_is_certifieds) # remove road pixels
+        #         H_ = self.nominal_pixel_is_certifieds.shape[0]
+        #         threshold = int(0.79* H_)
+        #         self.nominal_pixel_is_certifieds[:threshold,:]=1
                 
-                # NOTE: visualize raw_data ----
-                # Create a 3x2 grid of subplots
-                fig, axes = plt.subplots(4, 2, figsize=(10, 12))
+        #         # NOTE: visualize raw_data ----
+        #         # Create a 3x2 grid of subplots
+        #         fig, axes = plt.subplots(4, 2, figsize=(10, 12))
 
-                # First subplot (0,0): mu_b
-                data_mu_b = self.raw_data[:, :, 2]
-                im1 = axes[0, 0].imshow(data_mu_b, cmap='viridis', vmin=np.min(data_mu_b), vmax=np.max(data_mu_b))
-                axes[0, 0].set_title('mu_b')
-                fig.colorbar(im1, ax=axes[0, 0])
+        #         # First subplot (0,0): mu_b
+        #         data_mu_b = self.raw_data[:, :, 2]
+        #         im1 = axes[0, 0].imshow(data_mu_b, cmap='viridis', vmin=np.min(data_mu_b), vmax=np.max(data_mu_b))
+        #         axes[0, 0].set_title('mu_b')
+        #         fig.colorbar(im1, ax=axes[0, 0])
 
-                # Second subplot (0,1): nu_b
-                data_nu_b = self.raw_data[:, :, 3]
-                im2 = axes[0, 1].imshow(data_nu_b, cmap='viridis', vmin=np.min(data_nu_b), vmax=np.max(data_nu_b))
-                axes[0, 1].set_title('nu_b')
-                fig.colorbar(im2, ax=axes[0, 1])
+        #         # Second subplot (0,1): nu_b
+        #         data_nu_b = self.raw_data[:, :, 3]
+        #         im2 = axes[0, 1].imshow(data_nu_b, cmap='viridis', vmin=np.min(data_nu_b), vmax=np.max(data_nu_b))
+        #         axes[0, 1].set_title('nu_b')
+        #         fig.colorbar(im2, ax=axes[0, 1])
 
-                # Third subplot (1,0): mu_i
-                data_mu_i = self.raw_data[:, :, 4]
-                im3 = axes[1, 0].imshow(data_mu_i, cmap='viridis', vmin=np.min(data_mu_i), vmax=np.max(data_mu_i))
-                axes[1, 0].set_title('mu_i')
-                fig.colorbar(im3, ax=axes[1, 0])
+        #         # Third subplot (1,0): mu_i
+        #         data_mu_i = self.raw_data[:, :, 4]
+        #         im3 = axes[1, 0].imshow(data_mu_i, cmap='viridis', vmin=np.min(data_mu_i), vmax=np.max(data_mu_i))
+        #         axes[1, 0].set_title('mu_i')
+        #         fig.colorbar(im3, ax=axes[1, 0])
 
-                # Fourth subplot (1,1): nu_i
-                data_nu_i = self.raw_data[:, :, 5]
-                im4 = axes[1, 1].imshow(data_nu_i, cmap='viridis', vmin=np.min(data_nu_i), vmax=np.max(data_nu_i))
-                axes[1, 1].set_title('nu_i')
-                fig.colorbar(im4, ax=axes[1, 1])
+        #         # Fourth subplot (1,1): nu_i
+        #         data_nu_i = self.raw_data[:, :, 5]
+        #         im4 = axes[1, 1].imshow(data_nu_i, cmap='viridis', vmin=np.min(data_nu_i), vmax=np.max(data_nu_i))
+        #         axes[1, 1].set_title('nu_i')
+        #         fig.colorbar(im4, ax=axes[1, 1])
 
-                # Fifth subplot (2,0): mu_dot (same data as mu_i)
-                data_mu_dot = self.raw_data[:, :, 6]
-                im5 = axes[2, 0].imshow(data_mu_dot, cmap='viridis', vmin=np.min(data_mu_dot), vmax=np.max(data_mu_dot))
-                axes[2, 0].set_title('mu_dot')
-                fig.colorbar(im5, ax=axes[2, 0])
+        #         # Fifth subplot (2,0): mu_dot (same data as mu_i)
+        #         data_mu_dot = self.raw_data[:, :, 6]
+        #         im5 = axes[2, 0].imshow(data_mu_dot, cmap='viridis', vmin=np.min(data_mu_dot), vmax=np.max(data_mu_dot))
+        #         axes[2, 0].set_title('mu_dot')
+        #         fig.colorbar(im5, ax=axes[2, 0])
 
-                # Sixth subplot (2,1): nu_dot (same data as nu_i)
-                data_nu_dot = self.raw_data[:, :, 7]
-                im6 = axes[2, 1].imshow(data_nu_dot, cmap='viridis', vmin=np.min(data_nu_dot), vmax=np.max(data_nu_dot))
-                axes[2, 1].set_title('nu_dot')
-                fig.colorbar(im6, ax=axes[2, 1])
+        #         # Sixth subplot (2,1): nu_dot (same data as nu_i)
+        #         data_nu_dot = self.raw_data[:, :, 7]
+        #         im6 = axes[2, 1].imshow(data_nu_dot, cmap='viridis', vmin=np.min(data_nu_dot), vmax=np.max(data_nu_dot))
+        #         axes[2, 1].set_title('nu_dot')
+        #         fig.colorbar(im6, ax=axes[2, 1])
                 
-                # Seventh subplot (3,0): certify
-                data_certify = self.nominal_pixel_is_certifieds
-                im7 = axes[3, 0].imshow(data_certify, cmap='viridis', vmin=np.min(is_wp), vmax=np.max(is_wp))
-                axes[3, 0].set_title('certify')
-                fig.colorbar(im7, ax=axes[3, 0])
+        #         # Seventh subplot (3,0): certify
+        #         data_certify = self.nominal_pixel_is_certifieds
+        #         im7 = axes[3, 0].imshow(data_certify, cmap='viridis', vmin=np.min(is_wp), vmax=np.max(is_wp))
+        #         axes[3, 0].set_title('certify')
+        #         fig.colorbar(im7, ax=axes[3, 0])
                 
-                # Seventh subplot (3,1): wp
-                im8 = axes[3, 1].imshow(is_wp, cmap='viridis', vmin=np.min(is_wp), vmax=np.max(is_wp))
-                axes[3, 1].set_title('is_wp')
-                fig.colorbar(im8, ax=axes[3, 1])
+        #         # Seventh subplot (3,1): wp
+        #         im8 = axes[3, 1].imshow(is_wp, cmap='viridis', vmin=np.min(is_wp), vmax=np.max(is_wp))
+        #         axes[3, 1].set_title('is_wp')
+        #         fig.colorbar(im8, ax=axes[3, 1])
 
-                # Adjust layout for better spacing
-                plt.tight_layout()
+        #         # Adjust layout for better spacing
+        #         plt.tight_layout()
 
-                # Show the plot
-                plt.show()
-                # ------
-                """
+        #         # Show the plot
+        #         plt.show()
+        #         # ------
+        #         """
                 
-                self.nominal_pixel_is_certifieds = np.logical_or(1-is_wp, self.nominal_pixel_is_certifieds) # remove road pixels
-                H_ = self.nominal_pixel_is_certifieds.shape[0]
-                threshold = int(0.79* H_)
-                self.nominal_pixel_is_certifieds[:threshold,:]=1
-                self.resize_visualize(self.nominal_pixel_is_certifieds, 'target not follow after update', cert=False)
+        #         self.nominal_pixel_is_certifieds = np.logical_or(1-is_wp, self.nominal_pixel_is_certifieds) # remove road pixels
+        #         H_ = self.nominal_pixel_is_certifieds.shape[0]
+        #         threshold = int(0.79* H_)
+        #         self.nominal_pixel_is_certifieds[:threshold,:]=1
+        #         self.resize_visualize(self.nominal_pixel_is_certifieds, 'target not follow after update', cert=False)
             
-                """
-                NOTE: debug attempt
-                if self._step == 60:
-                    breakpoint()
+        #         """
+        #         NOTE: debug attempt
+        #         if self._step == 60:
+        #             breakpoint()
             
-                    # Create a 2x2 subplot grid
-                    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+        #             # Create a 2x2 subplot grid
+        #             fig, axes = plt.subplots(2, 2, figsize=(10, 8))
 
-                    # Plot mu
-                    axes[0, 0].set_title('self.mu', fontsize=14)
-                    c1 = axes[0, 0].imshow(self.mu, cmap='viridis', aspect='auto')
-                    axes[0, 0].set_title('self.mu')
-                    fig.colorbar(c1, ax=axes[0, 0])
+        #             # Plot mu
+        #             axes[0, 0].set_title('self.mu', fontsize=14)
+        #             c1 = axes[0, 0].imshow(self.mu, cmap='viridis', aspect='auto')
+        #             axes[0, 0].set_title('self.mu')
+        #             fig.colorbar(c1, ax=axes[0, 0])
 
-                    # Plot nu
-                    axes[0, 1].set_title('self.nu', fontsize=14)
-                    c2 = axes[0, 1].imshow(self.nu, cmap='plasma', aspect='auto')
-                    axes[0, 1].set_title('self.nu')
-                    fig.colorbar(c2, ax=axes[0, 1])
+        #             # Plot nu
+        #             axes[0, 1].set_title('self.nu', fontsize=14)
+        #             c2 = axes[0, 1].imshow(self.nu, cmap='plasma', aspect='auto')
+        #             axes[0, 1].set_title('self.nu')
+        #             fig.colorbar(c2, ax=axes[0, 1])
 
-                    # Plot self.X
-                    axes[1, 0].set_title('self.X', fontsize=14)
-                    c3 = axes[1, 0].imshow(self.X, cmap='inferno', aspect='auto')
-                    axes[1, 0].set_title('self.X')
-                    fig.colorbar(c3, ax=axes[1, 0])
+        #             # Plot self.X
+        #             axes[1, 0].set_title('self.X', fontsize=14)
+        #             c3 = axes[1, 0].imshow(self.X, cmap='inferno', aspect='auto')
+        #             axes[1, 0].set_title('self.X')
+        #             fig.colorbar(c3, ax=axes[1, 0])
 
-                    # Plot self.Y
-                    axes[1, 1].set_title('self.Y', fontsize=14)
-                    c4 = axes[1, 1].imshow(self.Y, cmap='magma', aspect='auto')
-                    axes[1, 1].set_title('self.Y')
-                    fig.colorbar(c4, ax=axes[1, 1])
+        #             # Plot self.Y
+        #             axes[1, 1].set_title('self.Y', fontsize=14)
+        #             c4 = axes[1, 1].imshow(self.Y, cmap='magma', aspect='auto')
+        #             axes[1, 1].set_title('self.Y')
+        #             fig.colorbar(c4, ax=axes[1, 1])
 
-                    # Adjust layout for better spacing
-                    plt.tight_layout()
+        #             # Adjust layout for better spacing
+        #             plt.tight_layout()
 
-                    # Show the plot
-                    plt.show()
-                    breakpoint()
-                """
-            
-            
+        #             # Show the plot
+        #             plt.show()
+        #             breakpoint()
+        #         """
             
             
-                cv2.waitKey(1)
-                return control # --> return obj avoidance control
+            
+            
+        #         cv2.waitKey(1)
+        #         return control # --> return obj avoidance control
         
         
         
         
         
-        cv2.waitKey(1)
-        return control
+        # cv2.waitKey(1)
+        # return control
     
     
     
@@ -735,7 +751,7 @@ class agent(HybridAgent):
 #             self.last_w_e = self.w_e
         
 #         if self.v_e < 0.2 and control.brake > 0:
-#             delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+#             delta = np.clip(max(0, self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
 #             _ = self.throttle_controller.step(delta)
 #             cv2.waitKey(1)
 #             return control
@@ -763,7 +779,7 @@ class agent(HybridAgent):
 #         self.resize_visualize(self.nominal_pixel_is_certifieds, 'white = certified pixels')
         
 #         if self.nominal_pixel_is_certifieds.sum() / self.nominal_pixel_is_certifieds.size > self.certify_threshold:
-#             delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+#             delta = np.clip(max(0, self.v_e) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
 #             _ = self.throttle_controller.step(delta)
 #             cv2.waitKey(1)
 #             return control
@@ -812,7 +828,7 @@ class agent(HybridAgent):
 #                 # print('sc case 1')
 #                 # throttle mapping
 #                 a_control = control_acc # before SC 2              
-#                 delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+#                 delta = np.clip(max(0, self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
 #                 throttle = self.throttle_controller.step(delta)
 #                 throttle = np.clip(throttle+0.15, 0.0, 0.75)
 #                 # throttle = np.maximum(control.throttle /2, 0.25)
@@ -826,7 +842,7 @@ class agent(HybridAgent):
 #             elif a_control > -0.2: # prioritize throttle
 #                 # print('sc case 2')
 #                 # throttle mapping           
-#                 delta = np.clip(math.sqrt(self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
+#                 delta = np.clip(max(0, self.v_e) * self.c_speed_sqrt + a_control * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
 #                 throttle = self.throttle_controller.step(delta)
 #                 throttle = np.clip(throttle, 0.0, 0.75)
 #                 brake = 0
