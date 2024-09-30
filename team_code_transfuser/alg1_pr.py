@@ -107,10 +107,10 @@ class Algorithm1:
         (H, W), where each element is a boolean, representing
         whether the pixel is certified
 
-        args = mu_i, nu_i, v_e, psi_e, a_e, phi_e
+        args = mu_i, nu_i, v_e, w_e, a_e, alpha_e
         """
         # unpack 
-        mu_i, nu_i, v_e, psi_e, a_e, phi_e, is_animated, depth_upper_bound, depth_lower_bound = args
+        mu_i, nu_i, v_e, w_e, a_e, alpha_e, is_animated, depth_upper_bound, depth_lower_bound = args
 
         # copy inputs into cuda device
         cuda.memcpy_htod(self.d_mus, mu_i)
@@ -119,9 +119,9 @@ class Algorithm1:
         # setup arguments for the kernel
         # convert all numbers to np.number
         v_e = np.float32(v_e)
-        psi_e = np.float32(psi_e)
+        w_e = np.float32(w_e)
         a_e = np.float32(a_e)
-        phi_e = np.float32(phi_e)
+        alpha_e = np.float32(alpha_e)
         self.gridsearchsize = np.intc(self.gridsearchsize)
         self.N_pixels = np.intc(self.N_pixels)
         self.is_animated = np.int8(is_animated)
@@ -138,13 +138,13 @@ class Algorithm1:
         # call function
 
         pycuda.driver.Context.synchronize()
-        self.certify_u_for_mu(self.f, self.d_mus, self.d_nus, self.d_Xs, self.d_Ys, self.d_offsets, v_e, psi_e, a_e,
-                             phi_e, self.gridsearchsize, self.N_pixels, self.d_mu_is_certifieds, self.d_mu_b_outs,
+        self.certify_u_for_mu(self.f, self.d_mus, self.d_nus, self.d_Xs, self.d_Ys, self.d_offsets, v_e, w_e, a_e,
+                             alpha_e, self.gridsearchsize, self.N_pixels, self.d_mu_is_certifieds, self.d_mu_b_outs,
                              self.d_mu_i_outs, self.d_mu_dot_outs, self.d_animateds, self.d_depth_upper_bound, 
                              self.d_depth_lower_bound, block=self.block_dim, grid=self.grid_dim)
         pycuda.driver.Context.synchronize()
-        self.certify_u_for_nu(self.f, self.d_mus, self.d_nus, self.d_Xs, self.d_Ys, self.d_offsets, v_e, psi_e, a_e,
-                             phi_e, self.gridsearchsize, self.N_pixels, self.d_nu_is_certifieds, self.d_nu_b_outs,
+        self.certify_u_for_nu(self.f, self.d_mus, self.d_nus, self.d_Xs, self.d_Ys, self.d_offsets, v_e, w_e, a_e,
+                             alpha_e, self.gridsearchsize, self.N_pixels, self.d_nu_is_certifieds, self.d_nu_b_outs,
                              self.d_nu_i_outs, self.d_nu_dot_outs, self.d_animateds, self.d_depth_upper_bound, 
                              self.d_depth_lower_bound, block=self.block_dim, grid=self.grid_dim)
         pycuda.driver.Context.synchronize()

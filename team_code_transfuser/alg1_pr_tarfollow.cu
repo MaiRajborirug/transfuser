@@ -1,10 +1,12 @@
 
 #define PI 3.141592654f
 #define V_I_MIN 0.0f 
-#define V_I_MAX 10.0f  // -V
+#define V_I_MAX 4.0f  // -V
 
-#define A_MIN -10.0f // -A
-#define A_MAX 6.0f
+// #define A_MIN -10.0f // -A
+// #define A_MAX 6.0f
+#define A_MIN -2.0f // -A
+#define A_MAX 2.0f
 
 #define PSI_I_MIN -0.1f
 #define PSI_I_MAX 0.1f
@@ -19,8 +21,11 @@
 #define IMG_W 960
 #define IMG_H 720
 
-#define Y_MIN 0.01407f // Y > Y_MIN for target following
-#define X_RANGE 0.004f // X < -X_RANGE or X > X_RANGE for target following
+#define Y_MIN 0.010070981f // Y > Y_MIN for target following
+#define X_RANGE 0.006f // X < -X_RANGE or X > X_RANGE for target following
+#define MU_B 0.02f
+#define NU_B 0.004f
+#define MU_DOT_B 0.1f
 
 __device__
 bool condition_22_is_satisfied(
@@ -392,7 +397,7 @@ float optimize_mu_dot_i(
     float theta_candidate = 0.0f;
     float theta_stepsize = 2.0f * PI / (float)N;
 
-    float best_y;
+    float best_y = 0.0f;
     bool first_iter = true; 
     float candidate_y;
 
@@ -518,15 +523,14 @@ void certify_u_for_mu(
     float d_upper_bound = d_upper_bounds[tid];
     float d_lower_bound = d_lower_bounds[tid];
 
-    float mu_b = 0.0f; //R * R * Y_i_t * nu_i / (X_i_t * H_BAR * H_BAR);
-    mu_b_out[tid] = mu_b;
     mu_i_out[tid] = mu_i;
     bool nu_find_upperbound = Y_i_t > Y_MIN;
     bool mu_find_left = X_i_t <= -X_RANGE; // check whimsicle
     bool mu_find_right = X_i_t >= X_RANGE;
     bool mu_find_mid = (X_i_t <= X_RANGE) && (X_i_t >= -X_RANGE);
 
-    if (nu_find_upperbound && mu_find_right && mu_i >= mu_b){ //
+    if (nu_find_upperbound && mu_find_right && mu_i >= -MU_B){ // right side event
+        mu_b_out[tid] = -MU_B;
         float mu_upper = optimize_mu_dot_i(
             f, 
             mu_i,
@@ -542,10 +546,12 @@ void certify_u_for_mu(
             animated,
             d_upper_bound,
             d_lower_bound);
-        u_certified_for_mu[tid] = mu_upper < 0.0f; //
+        u_certified_for_mu[tid] = mu_upper < -MU_DOT_B; //-0.0f; 
         mu_dot_out[tid] = mu_upper;
+        // mu_dot_out[tid] = 1.0f;
     } else 
-    if (nu_find_upperbound && mu_find_left && mu_i <= -mu_b){
+    if (nu_find_upperbound && mu_find_left && mu_i <= MU_B){ // left side event
+        mu_b_out[tid] = MU_B;
         float mu_lower = optimize_mu_dot_i(
             f, 
             mu_i,
@@ -561,11 +567,13 @@ void certify_u_for_mu(
             animated,
             d_upper_bound,
             d_lower_bound);
-        u_certified_for_mu[tid] = mu_lower > 0.0f; //5000.0f*offset;
+        u_certified_for_mu[tid] = mu_lower > MU_DOT_B; // 0.0f; =
         mu_dot_out[tid] = mu_lower;
+        // mu_dot_out[tid] = -1.0f;
     } else {
+        mu_b_out[tid] = 0.0f;
         u_certified_for_mu[tid] = true;
-        mu_dot_out[tid] = 0.0f;
+        mu_dot_out[tid] = 0.0f; // 0.0f;
     }
 
     
@@ -652,7 +660,7 @@ float optimize_nu_dot_i(
     float theta_candidate = 0.0f;
     float theta_stepsize = 2.0f * PI / (float)N;
 
-    float best_y;
+    float best_y = 0.0f;
     bool first_iter = true; 
     float candidate_y;
 
@@ -779,8 +787,6 @@ void certify_u_for_nu(
     float d_upper_bound = d_upper_bounds[tid];
     float d_lower_bound = d_lower_bounds[tid];
 
-    float nu_b = 0.0f; //H_BAR * H_BAR * X_i_t * mu_i / (R * R * Y_i_t);
-    nu_b_out[tid] = nu_b;
     nu_i_out[tid] = nu_i;
     bool nu_find_upperbound = Y_i_t > Y_MIN; // pixel index 360, see whimsicle
 
@@ -803,7 +809,8 @@ void certify_u_for_nu(
     //     u_certified_for_nu[tid] = nu_upper < -offset;
     //     nu_dot_out[tid] = nu_upper;
     // } else 
-    if (!nu_find_upperbound && nu_i <= nu_b){
+    if (nu_find_upperbound && nu_i <= NU_B){
+        nu_b_out[tid] = NU_B;
         float nu_lower = optimize_nu_dot_i(
             f, 
             mu_i,
