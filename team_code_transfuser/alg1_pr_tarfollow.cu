@@ -24,7 +24,7 @@
 #define Y_MIN 0.010070981f // Y > Y_MIN for target following
 #define X_RANGE 0.006f // X < -X_RANGE or X > X_RANGE for target following
 #define MU_B 0.02f
-#define NU_B 0.004f
+#define NU_B -0.03f
 #define MU_DOT_B 0.1f
 
 __device__
