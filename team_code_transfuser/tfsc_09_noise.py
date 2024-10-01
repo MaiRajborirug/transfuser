@@ -32,7 +32,7 @@ from alg1_pr import Algorithm1 #
 from alg2 import Algorithm2
 from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
 # NOTE: adjust submission_agent
-from tf_2404_noise import HybridAgent
+from tf_04_noise import HybridAgent
 # NOTE: get noise level
 NOISE = float(os.environ.get('NOISE')) # to run step -> d_std
 from optical_flow import OpticalFlowVisualizer
@@ -83,7 +83,7 @@ class agent(HybridAgent):
         # self._set_certificate_bound(x_deg_close=55, x_deg_far=35, y_deg=12, decay_temp=1.19, offset_scale=0.004)
         # self.certify_threshold = 0.987
         self._set_certificate_bound(x_deg_close=45, x_deg_far=35, y_deg=12, decay_temp=1.19, offset_scale=0.004)
-        self.certify_threshold = 0.989
+        self.certify_threshold = 0.996
         
         # NOTE: for optical flow
         self.optical_flow = optical_flow(self.camera_height, self.camera_width, self.meters_per_pixel_x, self.meters_per_pixel_y)
@@ -197,19 +197,23 @@ class agent(HybridAgent):
         control = carla.VehicleControl() 
         control.throttle = throttle
         control.brake = brake
-        control.steer = 0.0
-
-        self.step +=1
-        # print(f"{self.step}, v:{self.v_e:.2f}, a:{self.a_e:.2f}, si:{control_signal:.2f}, th:{throttle:.2f}, brake:{brake:.2f}")
-        
+        control.steer = 1.0
+        self._step +=1
+        # print(f"[{self.v_e:.4f}, {input_data['imu'][1][5]:.4f}],")
+            
         #------ start old algorithm -----
         delta_time = CarlaDataProvider.get_world().get_settings().fixed_delta_seconds
-        self._step += 1
+        
+        # to find the steer mapping
+        # print(f"[{self.v_e:.5f}, {input_data['imu'][1][5]:.5f}, {control.steer:.2f}],")
+        # return control
         
         # for fast testing, since the vehicle only run after step ~ 50, we can skip the first 50 steps
-        if self._step < 60: # Great success!
+        if self._step < 60:
             return control
-                
+        
+        # return control
+        print(f"{self._step}, v:{self.v_e:.2f}, a:{self.a_e:.2f}, si:{control_signal:.2f}, th:{throttle:.2f}, brake:{brake:.2f}")
         
         # NOTE: optical flow output
         self.bgr_ = input_data["rgb_front"][1][:, :, :3]  # rgb to rgb_front
@@ -265,16 +269,6 @@ class agent(HybridAgent):
         control_acc = self.a_e
         control_steering_rate = self.alpha_e
         
-        
-        # print(f"v:{self.v_e_deque[-1]:.3f}, v-v:{(self.v_e_deque[-1]-self.v_e_deque[-2])/self.delta_time:.3f}, a:{self.a_e:.3f}, rho:{self.rho_e_deque[-1]:.3f}")
-
-        # # might require to be remove
-        # if self.v_e < 0.2 and control.brake > 0:
-        #     delta = np.clip(math.sqrt(max(0,self.v_e)) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
-        #     _ = self.throttle_controller.step(delta)
-        #     cv2.waitKey(1)
-        #     return control
-        
         # convert optical flow to mu and nu
         self.mu = self.optical_flow_output[:, :, 0]
         self.nu =self.optical_flow_output[:, :, 1]
@@ -302,25 +296,13 @@ class agent(HybridAgent):
                 # print("certifying:", self.a_e, self.alpha_e)
                 pixel_is_certifieds, _ = self.alg1_solver.run(( self.mu, self.nu, self.v_e, self.w_e, self.a_e, self.alpha_e, is_animated, d_upper, d_lower))
 
-
-                # if (self.v_e > -0.001 and self.v_e < 0.001):
-                #     print("certified due to being stationary")
-                #     return True
-
                 # the pixel is automatically certified if it is 
                 # the road (in other words, not obstacle)
                 pixel_is_certifieds = np.logical_or(is_road, pixel_is_certifieds)
 
                 # we only want to check certification for those regions we care about
                 pixel_is_certifieds = np.logical_or(pixel_is_certifieds, self.no_certification_required)
-
-                # print("is certified: ", pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold)
-                # cv_img2 = np.repeat(pixel_is_certifieds[:, :, np.newaxis].astype(np.uint8) * 255, 3, axis=2)
-                # cv2.putText(cv_img2, step_text, position, font, font_scale, color, thickness)
-                # cv2.imshow("certified, post mask", cv_img2)
-            
-                
-                # return pixel_is_certifieds.sum() / pixel_is_certifieds.size > self.certify_threshold
+                            
                 return pixel_is_certifieds.sum() / pixel_is_certifieds.size
         
             res = self.alg2_solver.run(nominal_control, certify_control_action)
@@ -331,7 +313,7 @@ class agent(HybridAgent):
                 # print("certified control action: ", a_control, alpha_control)
 
                 # NOTE: map (a, alpha) back to carla control (throttle, steering, break)
-                if abs(a_control) < 2 * abs(alpha_control) * self.turning_radius and (a_control > -2): # prioritize turning arbitary comparison
+                if abs(a_control) < 2 * abs(alpha_control) * self.turning_radius and (a_control > -1): # prioritize turning arbitary comparison
                     # print('sc case 1')
                     # throttle mapping
                     a_control = control_acc # before SC 2              
@@ -340,8 +322,8 @@ class agent(HybridAgent):
                     throttle = np.clip(throttle+0.15, 0.0, 0.75)
                     # throttle = np.maximum(control.throttle /2, 0.25)
                     brake = 0
-                    
                     steer = 0.0
+                    print('obj avoid case1: throttle: {:.2%}, brake: {}, steer: {:.3%}'.format(control.throttle, control.brake, control.steer))
                 
                 # elif a_control > -0.2: # prioritize throttle
                 #     # print('sc case 2')
@@ -357,7 +339,7 @@ class agent(HybridAgent):
                 #     steer = self._calculate_steer(self.v_e, desire_w)
 
                 else:
-                    # print('sc case 3')
+                    print('obj avoid case3: throttle: {:.2%}, brake: {}, steer: {:.3%}'.format(control.throttle, control.brake, control.steer))
                     throttle = 0
                     brake = 1
                     steer = 0
@@ -365,7 +347,7 @@ class agent(HybridAgent):
                 control.steer = steer
                 control.throttle = np.minimum(throttle, control.throttle)
                 control.brake = np.maximum(brake, control.brake)
-                print('object avoid: throttle: {:.2%}, brake: {}, steer: {:.3%}'.format(control.throttle, control.brake, control.steer))
+                
                 
                 self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,self.v_e,self.w_e,a_control,alpha_control, is_animated, d_upper, d_lower))
                 # self.nominal_pixel_is_certifieds, self._ = self.alg1_solver.run((self.mu,self.nu,self.v_e,w_e,interfuser_acc,interfuser_steering_rate))
@@ -376,8 +358,6 @@ class agent(HybridAgent):
             
                 cv2.waitKey(1)
                 return control # --> return obj avoidance control
-        
-        
         
         
         # NOTE: target following -----    
@@ -931,7 +911,7 @@ class agent(HybridAgent):
         self.no_certification_required = np.logical_or(is_sky, self.no_certification_required)
     
     def resize_visualize(self, img, img_name, scale=0.5, binary_input=True, cert=True):
-        step_text = f'Step: {self.step}'
+        step_text = f'Step: {self._step}'
         font = cv2.FONT_HERSHEY_SIMPLEX
         position = (50, 30)
         font_scale = 1
