@@ -197,7 +197,7 @@ class agent(HybridAgent):
         control = carla.VehicleControl() 
         control.throttle = throttle
         control.brake = brake
-        control.steer = 1.0
+        control.steer = 0.0
         self._step +=1
         # print(f"[{self.v_e:.4f}, {input_data['imu'][1][5]:.4f}],")
             
@@ -225,7 +225,7 @@ class agent(HybridAgent):
         
         # NOTE: CARLA segmentation, initialize gt segmentation # edit 09/27 add is_wp
         is_wp, is_road, is_nonanimated, is_terrain, is_animated, group_label = group_segment(pred_mask)
-        self.resize_visualize(group_label, 'segment label', binary_input=False)
+        # self.resize_visualize(group_label, 'segment label', binary_input=False)
         
         self.resize_visualize(self.bgr_, 'input', binary_input=False)  # NOTE: debug attempt
         
@@ -443,7 +443,7 @@ class agent(HybridAgent):
                 # steer mapping 2
                 gain = -13.0 # don't know why negative?
                 desire_w_e = self.w_e + gain * (self.delta_time * alpha_control) # gain
-                desire_rho = desire_w_e / (abs(self.v_e) + 1e-5) # signal too week ~ e-5
+                desire_rho = desire_w_e / (abs(self.v_e) + self.config.c_rs) # appear when w happen without v_e
                 self.rho_e_deque.append(desire_rho)
                 steer = self.config.m_rs * desire_rho
                 # steer = self.turn_controller.step(steer) # finally we want to have steer ~ 0

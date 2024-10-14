@@ -69,7 +69,8 @@ class GlobalConfig:
 
     # steer and rho (1/turning radius) mapping
     # steer = m_rs * rho
-    m_rs = 2.384049176899551
+    m_rs = 2.0945220488020944
+    c_rs = 0.3
     
 
     #Waypoint GRU
