@@ -35,7 +35,8 @@ SENSORS_LIMITS = {
     'sensor.speedometer': 1,
     'sensor.stitch_camera.rgb': 1,
     'sensor.camera.depth': 4, # for data generation
-    'sensor.camera.semantic_segmentation': 4 # for data generation
+    'sensor.camera.semantic_segmentation': 4, # for data generation
+    'sensor.camera.dvs': 1 # for accurate optical flow
 }
 
 
@@ -66,6 +67,7 @@ class AgentWrapper(object):
         'sensor.stitch_camera.rgb', # for World on Rails eval
         'sensor.camera.depth', # for data generation
         'sensor.camera.semantic_segmentation', # for data generation
+        'sensor.camera.dvs', # for accurate optical flow
     ]
 
     _agent = None

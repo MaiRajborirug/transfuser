@@ -7,7 +7,7 @@ from multiprocessing import Pool
 class Algorithm2:
     def __init__(self) -> None:
         self.a_bounds = (-13.0, 11.0)
-        self.alpha_bounds = (-5.0, 5.0)
+        self.alpha_bounds = (-6.0, 6.0)
         self.a_number_points = 20
         self.alpha_number_points = 20
         self.cost_func_weight = 1000
@@ -26,13 +26,17 @@ class Algorithm2:
             # max: 1 - certify(u_t) = 1
             # but about < 300 pixel determine the cost out ff 460800 pixel -> use that ratio
             # max: (a_nom - a)**2/169.0 + 20*(alpha_nom - alpha)**2/25.0 =1
-            return (460800/300)*(1 - certify(u_t))  + 0.1 * ((a_nom - a)**2/169.0 + (alpha_nom - alpha)**2/25.0) 
+            # return (460800/300)*(1 - certify(u_t))  + 0.1 * ((a_nom - a)**2/169.0 + (alpha_nom - alpha)**2/25.0) 
+            
+            # if the certification = 1, its comdown to the cost of the control action
+            return (1e6)*(1 - certify(u_t))  + 0.1 * ((a_nom - a)**2/169.0 + (alpha_nom - alpha)**2/25.0) 
 
         before_op = time.time()
         (a_nom, alpha_nom, certify) = args
         
         self.res = optimize.brute(func=cost_func,
-                             ranges=((self.a_bounds[0] + a_nom, self.a_bounds[1] + a_nom), (self.alpha_bounds[0] + alpha_nom, self.alpha_bounds[1] + alpha_nom)),
+                            #  ranges=((self.a_bounds[0] + a_nom, self.a_bounds[1] + a_nom), (self.alpha_bounds[0] + alpha_nom, self.alpha_bounds[1] + alpha_nom)),
+                            ranges=((self.a_bounds[0], self.a_bounds[1]), (self.alpha_bounds[0], self.alpha_bounds[1])),
                              args=args,
                              Ns=3,
                              finish=None,
@@ -52,7 +56,10 @@ class Algorithm2:
         args = (a_nom, alpha_nom, certify)
         optimized_u, cost = self.optimize_discrete(args)
 
-        if (cost < np.finfo(np.float32).max):
+        if (cost > 1e6):
+            print('safe control action not found')
+            return optimized_u
+        elif (cost < np.finfo(np.float32).max):
             return optimized_u
         else:
             return None

@@ -1,12 +1,12 @@
 
 #define PI 3.141592654f
 #define V_I_MIN 0.0f 
-#define V_I_MAX 4.0f  // -V
+#define V_I_MAX 3.0f  // -V
 
 // #define A_MIN -10.0f // -A
 // #define A_MAX 6.0f
-#define A_MIN -2.0f // -A
-#define A_MAX 2.0f
+#define A_MIN -1.0f // -A
+#define A_MAX 1.0f
 
 #define PSI_I_MIN -0.1f
 #define PSI_I_MAX 0.1f
@@ -19,12 +19,12 @@
 #define H_BAR 0.1f
 
 #define IMG_W 960
-#define IMG_H 720
+#define IMG_H 480
 
-#define Y_MIN 0.010070981f // Y > Y_MIN for target following
-#define X_RANGE 0.006f // X < -X_RANGE or X > X_RANGE for target following
-#define MU_B 0.02f
-#define NU_B -0.03f
+#define Y_MIN 0.00f // Y > Y_MIN for target following 0.01
+#define X_RANGE 0.002f // X < -X_RANGE or X > X_RANGE for target following 0.004
+#define MU_B 0.025f // 0.025
+#define NU_B -0.01f //-0.03
 #define MU_DOT_B 0.1f
 
 __device__
@@ -333,6 +333,14 @@ float eqn_54(float a_i,
     //return f;
 }
 
+
+
+
+
+
+
+
+
 // __device__
 // void solve_eqn_60_for_0(float f, float X_i_t, float* theta_candidates){
 //     float theta = atanf(X_i_t / f);
@@ -353,28 +361,52 @@ float eqn_54(float a_i,
 // }
 
 __device__
-float optimize_mu_dot_i(
+float get_mu_dot(
             float f, 
+            float x_v_i,
+            float y_v_i,
+            float x_a_i,
+            float y_a_i,
+            float X_i, 
+            float Y_i,
+            float mu_i, 
+            float nu_i,  
+            float v_e,
+            float a_e,
+            float omega_e,
+            float alpha_e,
+            float D_i,
+            float gamma_i)
+{
+    // float gamma_i =  sqrtf(((X_i * X_i) / (f * f)) + 1.0f);
+    float term1 = gamma_i * X_i / D_i * (-x_a_i - 2 * omega_e * y_v_i + a_e);
+    float term2 = gamma_i * f / D_i * (y_a_i + 2 * omega_e * x_v_i + omega_e * v_e);
+    float term3 = - gamma_i * gamma_i * alpha_e;
+    float term4 = 2*mu_i*nu_i/Y_i;
+    return term1 + term2 + term3 + term4;
+}
+
+__device__
+float optimize_mu_dot_i2(
+            float f, 
+            float X_i, 
+            float Y_i, 
             float mu_i,
             float nu_i, 
-            float X_i_t, 
-            float Y_i_t, 
             float v_e, 
-            float psi_e, 
-            float a_e, 
-            float phi_e,
-            unsigned int N,
+            float a_e,
+            float omega_e,
+            float alpha_e,
+            // unsigned int N,
             bool findmax,
             int8_t animated,
             float d_upper_bound,
             float d_lower_bound)
 {
-    // iterate over boundary values of a_i, v_i, psi_i and D,
-    // brute force over theta
+    // iterate over boundary values of x_v_i, y_v_i, x_a_i, y_a_i, D_i
 
-    // compute CHI
-    // inverse squre root
-    float CHI = rsqrtf(((X_i_t * X_i_t) / (f * f)) + 1.0f);
+    // compute gamma
+    float gamma_i =  sqrtf(((X_i * X_i) / (f * f)) + 1.0f);
 
     // float D_MAX = 0.0f;
     // float D_MIN = 0.0f;
@@ -390,44 +422,46 @@ float optimize_mu_dot_i(
     //     &D_MIN,
     //     &D_MAX,
     //     animated); // assign D_MIN, D_MAX new values
-    float a_i_candidates[2] = {A_MIN, A_MAX};
-    float v_i_candidates[2] = {V_I_MIN, V_I_MAX};
-    float psi_i_candidates[2] = {PSI_I_MIN, PSI_I_MAX};
+    float x_v_i_candidates[2] = {-V_I_MAX, V_I_MAX};
+    float y_v_i_candidates[2] = {-V_I_MAX, V_I_MAX};
+    float x_a_i_candidates[2] = {-A_MAX, A_MAX};
+    float y_a_i_candidates[2] = {-A_MAX, A_MAX};
     float D_candidates[2] ={d_upper_bound, d_lower_bound};
-    float theta_candidate = 0.0f;
-    float theta_stepsize = 2.0f * PI / (float)N;
 
+    // best_y = mu_dot or nu_dot output
     float best_y = 0.0f;
     bool first_iter = true; 
     float candidate_y;
 
     // non animate and animate objects
     if (animated){
-        for (int a_i_idx = 0; a_i_idx < 2; a_i_idx ++){
-            for (int v_i_idx = 0; v_i_idx < 2; v_i_idx ++){
-                for (int psi_i_idx = 0; psi_i_idx < 2; psi_i_idx ++){
-                    for (int D_idx = 0; D_idx < 2; D_idx ++){
-                        float a_i_candidate = a_i_candidates[a_i_idx];
-                        float v_i_candidate = v_i_candidates[v_i_idx];
-                        float psi_i_candidate = psi_i_candidates[psi_i_idx];
-                        float D_candidate = D_candidates[D_idx];
+        for (int x_v_i_idx = 0; x_v_i_idx < 2; x_v_i_idx ++){
+            for (int y_v_i_idx = 0; y_v_i_idx < 2; y_v_i_idx ++){
+                for (int x_a_i_idx = 0; x_a_i_idx < 2; x_a_i_idx ++){
+                    for (int y_a_i_idx = 0; y_a_i_idx < 2; y_a_i_idx ++){
+                        for (int D_idx = 0; D_idx < 2; D_idx ++){
+                            float x_v_i_candidate = x_v_i_candidates[x_v_i_idx];
+                            float y_v_i_candidate = y_v_i_candidates[y_v_i_idx];
+                            float x_a_i_candidate = x_a_i_candidates[x_a_i_idx];
+                            float y_a_i_candidate = y_a_i_candidates[y_a_i_idx];
+                            float D_candidate = D_candidates[D_idx];
 
-                        for (int i = 0; i < N; i++){
-                            candidate_y = eqn_54(a_i_candidate,
-                                            f, 
-                                            mu_i, 
-                                            nu_i, 
-                                            X_i_t,
-                                            Y_i_t,
-                                            v_i_candidate, 
-                                            v_e, 
-                                            psi_i_candidate,
-                                            psi_e,
-                                            a_e,
-                                            theta_candidate,
-                                            phi_e,
-                                            CHI, 
-                                            D_candidate);
+                            candidate_y = get_mu_dot(
+                                f, 
+                                x_v_i_candidate,
+                                y_v_i_candidate,
+                                x_a_i_candidate,
+                                y_a_i_candidate,
+                                X_i, 
+                                Y_i,
+                                mu_i, 
+                                nu_i,  
+                                v_e,
+                                a_e,
+                                omega_e,
+                                alpha_e,
+                                D_candidate,
+                                gamma_i);
 
                             if (first_iter){
                                 best_y = candidate_y;
@@ -438,7 +472,6 @@ float optimize_mu_dot_i(
                             }else if (!findmax && best_y > candidate_y){
                                 best_y = candidate_y;
                             }
-                            theta_candidate += theta_stepsize;
                         }
                     }
                 }
@@ -446,26 +479,29 @@ float optimize_mu_dot_i(
         }
     }
     else {
-        // for (int D_idx = 0; D_idx < 2; D_idx ++){
-            // float D_candidate = D_candidates[D_idx];
-        float D_candidate = d_upper_bound;
-
-        for (int i = 0; i < N; i++){
-            candidate_y = eqn_54(0.0f, //a_i_candidate,
-                            f, 
-                            mu_i, 
-                            nu_i, 
-                            X_i_t,
-                            Y_i_t,
-                            0.0f, //v_i_candidate, 
-                            v_e, 
-                            0.0f, //psi_i_candidate,
-                            psi_e,
-                            a_e,
-                            theta_candidate,
-                            phi_e,
-                            CHI, 
-                            D_candidate);
+        for (int D_idx = 0; D_idx < 2; D_idx ++){
+            float x_v_i_candidate = 0.0;
+            float y_v_i_candidate = 0.0;
+            float x_a_i_candidate = 0.0;
+            float y_a_i_candidate = 0.0;
+            float D_candidate = D_candidates[D_idx];
+            
+            candidate_y = get_mu_dot(
+                f, 
+                x_v_i_candidate,
+                y_v_i_candidate,
+                x_a_i_candidate,
+                y_a_i_candidate,
+                X_i, 
+                Y_i,
+                mu_i, 
+                nu_i,  
+                v_e,
+                a_e,
+                omega_e,
+                alpha_e,
+                D_candidate,
+                gamma_i);
 
             if (first_iter){
                 best_y = candidate_y;
@@ -476,13 +512,143 @@ float optimize_mu_dot_i(
             }else if (!findmax && best_y > candidate_y){
                 best_y = candidate_y;
             }
-            theta_candidate += theta_stepsize;
         }
-        // }
     }
     return best_y;
     //return D_MAX;
 }
+
+// __device__
+// float optimize_mu_dot_i(
+//             float f, 
+//             float mu_i,
+//             float nu_i, 
+//             float X_i_t, 
+//             float Y_i_t, 
+//             float v_e, 
+//             float psi_e, 
+//             float a_e, 
+//             float phi_e,
+//             unsigned int N,
+//             bool findmax,
+//             int8_t animated,
+//             float d_upper_bound,
+//             float d_lower_bound)
+// {
+//     // iterate over boundary values of a_i, v_i, psi_i and D,
+//     // brute force over theta
+
+//     // compute CHI
+//     // inverse squre root
+//     float CHI = rsqrtf(((X_i_t * X_i_t) / (f * f)) + 1.0f);
+
+//     // float D_MAX = 0.0f;
+//     // float D_MIN = 0.0f;
+//     // calculate_D_bounds(
+//     //     f, 
+//     //     mu_i,        
+//     //     nu_i, 
+//     //     X_i_t,
+//     //     Y_i_t, 
+//     //     v_e, 
+//     //     psi_e, 
+//     //     CHI,
+//     //     &D_MIN,
+//     //     &D_MAX,
+//     //     animated); // assign D_MIN, D_MAX new values
+//     float a_i_candidates[2] = {A_MIN, A_MAX};
+//     float v_i_candidates[2] = {V_I_MIN, V_I_MAX};
+//     float psi_i_candidates[2] = {PSI_I_MIN, PSI_I_MAX};
+//     float D_candidates[2] ={d_upper_bound, d_lower_bound};
+//     float theta_candidate = 0.0f;
+//     float theta_stepsize = 2.0f * PI / (float)N;
+
+//     float best_y = 0.0f;
+//     bool first_iter = true; 
+//     float candidate_y;
+
+//     // non animate and animate objects
+//     if (animated){
+//         for (int a_i_idx = 0; a_i_idx < 2; a_i_idx ++){
+//             for (int v_i_idx = 0; v_i_idx < 2; v_i_idx ++){
+//                 for (int psi_i_idx = 0; psi_i_idx < 2; psi_i_idx ++){
+//                     for (int D_idx = 0; D_idx < 2; D_idx ++){
+//                         float a_i_candidate = a_i_candidates[a_i_idx];
+//                         float v_i_candidate = v_i_candidates[v_i_idx];
+//                         float psi_i_candidate = psi_i_candidates[psi_i_idx];
+//                         float D_candidate = D_candidates[D_idx];
+
+//                         for (int i = 0; i < N; i++){
+//                             candidate_y = eqn_54(a_i_candidate,
+//                                             f, 
+//                                             mu_i, 
+//                                             nu_i, 
+//                                             X_i_t,
+//                                             Y_i_t,
+//                                             v_i_candidate, 
+//                                             v_e, 
+//                                             psi_i_candidate,
+//                                             psi_e,
+//                                             a_e,
+//                                             theta_candidate,
+//                                             phi_e,
+//                                             CHI, 
+//                                             D_candidate);
+
+//                             if (first_iter){
+//                                 best_y = candidate_y;
+//                                 first_iter = false;
+//                             }
+//                             else if (findmax && best_y < candidate_y){
+//                                 best_y = candidate_y;
+//                             }else if (!findmax && best_y > candidate_y){
+//                                 best_y = candidate_y;
+//                             }
+//                             theta_candidate += theta_stepsize;
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//     }
+//     else {
+//         // for (int D_idx = 0; D_idx < 2; D_idx ++){
+//             // float D_candidate = D_candidates[D_idx];
+//         float D_candidate = d_upper_bound;
+
+//         for (int i = 0; i < N; i++){
+//             candidate_y = eqn_54(0.0f, //a_i_candidate,
+//                             f, 
+//                             mu_i, 
+//                             nu_i, 
+//                             X_i_t,
+//                             Y_i_t,
+//                             0.0f, //v_i_candidate, 
+//                             v_e, 
+//                             0.0f, //psi_i_candidate,
+//                             psi_e,
+//                             a_e,
+//                             theta_candidate,
+//                             phi_e,
+//                             CHI, 
+//                             D_candidate);
+
+//             if (first_iter){
+//                 best_y = candidate_y;
+//                 first_iter = false;
+//             }
+//             else if (findmax && best_y < candidate_y){
+//                 best_y = candidate_y;
+//             }else if (!findmax && best_y > candidate_y){
+//                 best_y = candidate_y;
+//             }
+//             theta_candidate += theta_stepsize;
+//         }
+//         // }
+//     }
+//     return best_y;
+//     //return D_MAX;
+// }
 
 __global__
 void certify_u_for_mu(
@@ -493,9 +659,9 @@ void certify_u_for_mu(
             float* Y_i_ts,
             float* offsets,
             float v_e, 
-            float psi_e, 
-            float a_e, 
-            float phi_e,
+            float a_e,
+            float omega_e, 
+            float alpha_e, 
             unsigned int N_points,
             unsigned int N_pixels,
             bool* u_certified_for_mu,
@@ -503,6 +669,7 @@ void certify_u_for_mu(
             float* mu_i_out,
             float* mu_dot_out,
             int8_t* animateds,
+            int8_t* rois, // area of interest?
             float* d_upper_bounds,
             float* d_lower_bounds){
 
@@ -514,14 +681,16 @@ void certify_u_for_mu(
         return;
     }
 
-    float mu_i = mu_is[tid];
-    float nu_i = nu_is[tid]; 
     float X_i_t = X_i_ts[tid];
     float Y_i_t = Y_i_ts[tid];
-    float offset = offsets[tid];
-    int8_t animated = animateds[tid];
+    float mu_i = mu_is[tid];
+    float nu_i = nu_is[tid]; 
     float d_upper_bound = d_upper_bounds[tid];
     float d_lower_bound = d_lower_bounds[tid];
+    float offset = offsets[tid];
+    int8_t animated = animateds[tid];
+    int8_t roi = rois[tid];
+
 
     mu_i_out[tid] = mu_i;
     bool nu_find_upperbound = Y_i_t > Y_MIN;
@@ -529,54 +698,53 @@ void certify_u_for_mu(
     bool mu_find_right = X_i_t >= X_RANGE;
     bool mu_find_mid = (X_i_t <= X_RANGE) && (X_i_t >= -X_RANGE);
 
-    if (nu_find_upperbound && mu_find_right && mu_i >= -MU_B){ // right side event
+    if (roi == 0){ // not a target -> skip computation
+        u_certified_for_mu[tid] = true;
+        mu_dot_out[tid] = 0.0f;
+        mu_b_out[tid] = 0.0f;
+        return;
+    }
+    else if (nu_find_upperbound && mu_find_right && mu_i >= -MU_B){ // right side event
         mu_b_out[tid] = -MU_B;
-        float mu_upper = optimize_mu_dot_i(
+        float mu_upper = optimize_mu_dot_i2(
             f, 
-            mu_i,
-            nu_i, 
             X_i_t, 
             Y_i_t, 
+            mu_i,
+            nu_i, 
             v_e, 
-            psi_e, 
-            a_e, 
-            phi_e, 
-            N_points,
+            a_e,
+            omega_e,
+            alpha_e,
             true,
             animated,
             d_upper_bound,
             d_lower_bound);
-        u_certified_for_mu[tid] = mu_upper < -MU_DOT_B; //-0.0f; 
+        u_certified_for_mu[tid] = mu_upper < MU_DOT_B;
         mu_dot_out[tid] = mu_upper;
-        // mu_dot_out[tid] = 1.0f;
-    } else 
-    if (nu_find_upperbound && mu_find_left && mu_i <= MU_B){ // left side event
+    } else if (nu_find_upperbound && mu_find_left && mu_i <= MU_B){ // left side event
         mu_b_out[tid] = MU_B;
-        float mu_lower = optimize_mu_dot_i(
+        float mu_lower = optimize_mu_dot_i2(
             f, 
-            mu_i,
-            nu_i, 
             X_i_t, 
             Y_i_t, 
+            mu_i,
+            nu_i, 
             v_e, 
-            psi_e, 
-            a_e, 
-            phi_e, 
-            N_points,
+            a_e,
+            omega_e,
+            alpha_e,
             false,
             animated,
             d_upper_bound,
             d_lower_bound);
         u_certified_for_mu[tid] = mu_lower > MU_DOT_B; // 0.0f; =
         mu_dot_out[tid] = mu_lower;
-        // mu_dot_out[tid] = -1.0f;
-    } else {
+    } else { // currently follow path
         mu_b_out[tid] = 0.0f;
         u_certified_for_mu[tid] = true;
-        mu_dot_out[tid] = 0.0f; // 0.0f;
+        mu_dot_out[tid] = 0.0f; 
     }
-
-    
 }
 
 __device__
@@ -608,38 +776,57 @@ float eqn_55(float a_i,
     //return term1;
 }
 
-__device__ 
-float optimize_nu_dot_i(
+__device__
+float get_nu_dot(
             float f, 
+            float x_v_i,
+            float y_v_i,
+            float x_a_i,
+            float y_a_i,
+            float X_i, 
+            float Y_i,
+            float mu_i, 
+            float nu_i,  
+            float v_e,
+            float a_e,
+            float omega_e,
+            float alpha_e,
+            float D_i,
+            float gamma_i)
+{
+    // float gamma_i =  sqrtf(((X_i * X_i) / (f * f)) + 1.0f);
+    float term1 = gamma_i * Y_i / D_i * (-x_a_i - 2 * omega_e * y_v_i + a_e);
+    float term2 = omega_e * omega_e * Y_i;
+    float term3 = - alpha_e * X_i * Y_i / f;
+    float term4 = nu_i * nu_i / Y_i;
+    return term1 + term2 + term3 + term4;
+}
+
+__device__
+float optimize_nu_dot_i2(
+            float f, 
+            float X_i, 
+            float Y_i, 
             float mu_i,
             float nu_i, 
-            float X_i_t, 
-            float Y_i_t, 
             float v_e, 
-            float psi_e, 
-            float a_e, 
-            float phi_e, 
-            unsigned int N, 
+            float a_e,
+            float omega_e,
+            float alpha_e,
+            // unsigned int N,
             bool findmax,
             int8_t animated,
             float d_upper_bound,
-            float d_lower_bound){
+            float d_lower_bound
+)
+{
+    // iterate over boundary values of x_v_i, y_v_i, x_a_i, y_a_i, D_i
 
-    // brute force over theta,
-    // use boundary values for a_i, v_i, psi_e and D
-    // since mu_dot is monotonomus w.r.t these 4 variables
+    // compute gamma
+    float gamma_i =  sqrtf(((X_i * X_i) / (f * f)) + 1.0f);
 
-    
-     // iterate over boundary values of a_i, v_i, psi_i and D,
-    // brute force over theta
-
-    // compute CHI
-    // inverse squre root
-
-    float CHI = rsqrtf(((X_i_t * X_i_t) / (f * f)) + 1.0f);
-
+    // float D_MAX = 0.0f;
     // float D_MIN = 0.0f;
-    // float D_MAX = d_depth_array;
     // calculate_D_bounds(
     //     f, 
     //     mu_i,        
@@ -651,46 +838,47 @@ float optimize_nu_dot_i(
     //     CHI,
     //     &D_MIN,
     //     &D_MAX,
-    //     animated);
-
-    float a_i_candidates[2] = {A_MIN, A_MAX};
-    float v_i_candidates[2] = {V_I_MIN, V_I_MAX};
-    float psi_i_candidates[2] = {PSI_I_MIN, PSI_I_MAX};
+    //     animated); // assign D_MIN, D_MAX new values
+    float x_v_i_candidates[2] = {-V_I_MAX, V_I_MAX};
+    float y_v_i_candidates[2] = {-V_I_MAX, V_I_MAX};
+    float x_a_i_candidates[2] = {-A_MAX, A_MAX};
+    float y_a_i_candidates[2] = {-A_MAX, A_MAX};
     float D_candidates[2] ={d_upper_bound, d_lower_bound};
-    float theta_candidate = 0.0f;
-    float theta_stepsize = 2.0f * PI / (float)N;
 
+    // best_y = mu_dot or nu_dot output
     float best_y = 0.0f;
     bool first_iter = true; 
     float candidate_y;
 
     // non animate and animate objects
     if (animated){
-        for (int a_i_idx = 0; a_i_idx < 2; a_i_idx ++){
-            for (int v_i_idx = 0; v_i_idx < 2; v_i_idx ++){
-                for (int psi_i_idx = 0; psi_i_idx < 2; psi_i_idx ++){
-                    for (int D_idx = 0; D_idx < 2; D_idx ++){
-                        float a_i_candidate = a_i_candidates[a_i_idx];
-                        float v_i_candidate = v_i_candidates[v_i_idx];
-                        float psi_i_candidate = psi_i_candidates[psi_i_idx];
-                        float D_candidate = D_candidates[D_idx];
+        for (int x_v_i_idx = 0; x_v_i_idx < 2; x_v_i_idx ++){
+            for (int y_v_i_idx = 0; y_v_i_idx < 2; y_v_i_idx ++){
+                for (int x_a_i_idx = 0; x_a_i_idx < 2; x_a_i_idx ++){
+                    for (int y_a_i_idx = 0; y_a_i_idx < 2; y_a_i_idx ++){
+                        for (int D_idx = 0; D_idx < 2; D_idx ++){
+                            float x_v_i_candidate = x_v_i_candidates[x_v_i_idx];
+                            float y_v_i_candidate = y_v_i_candidates[y_v_i_idx];
+                            float x_a_i_candidate = x_a_i_candidates[x_a_i_idx];
+                            float y_a_i_candidate = y_a_i_candidates[y_a_i_idx];
+                            float D_candidate = D_candidates[D_idx];
 
-                        for (int i = 0; i < N; i++){
-                            candidate_y = eqn_54(a_i_candidate,
-                                            f, 
-                                            mu_i, 
-                                            nu_i, 
-                                            X_i_t,
-                                            Y_i_t,
-                                            v_i_candidate, 
-                                            v_e, 
-                                            psi_i_candidate,
-                                            psi_e,
-                                            a_e,
-                                            theta_candidate,
-                                            phi_e,
-                                            CHI, 
-                                            D_candidate);
+                            candidate_y = get_nu_dot(
+                                f, 
+                                x_v_i_candidate,
+                                y_v_i_candidate,
+                                x_a_i_candidate,
+                                y_a_i_candidate,
+                                X_i, 
+                                Y_i,
+                                mu_i, 
+                                nu_i,  
+                                v_e,
+                                a_e,
+                                omega_e,
+                                alpha_e,
+                                D_candidate,
+                                gamma_i);
 
                             if (first_iter){
                                 best_y = candidate_y;
@@ -701,7 +889,6 @@ float optimize_nu_dot_i(
                             }else if (!findmax && best_y > candidate_y){
                                 best_y = candidate_y;
                             }
-                            theta_candidate += theta_stepsize;
                         }
                     }
                 }
@@ -709,26 +896,29 @@ float optimize_nu_dot_i(
         }
     }
     else {
-        // for (int D_idx = 0; D_idx < 2; D_idx ++){
-            // float D_candidate = D_candidates[D_idx];
-        float D_candidate = d_upper_bound;
-
-        for (int i = 0; i < N; i++){
-            candidate_y = eqn_54(0.0f, //a_i_candidate,
-                            f, 
-                            mu_i, 
-                            nu_i, 
-                            X_i_t,
-                            Y_i_t,
-                            0.0f, //v_i_candidate, 
-                            v_e, 
-                            0.0f, //psi_i_candidate,
-                            psi_e,
-                            a_e,
-                            theta_candidate,
-                            phi_e,
-                            CHI, 
-                            D_candidate);
+        for (int D_idx = 0; D_idx < 2; D_idx ++){
+            float x_v_i_candidate = 0.0;
+            float y_v_i_candidate = 0.0;
+            float x_a_i_candidate = 0.0;
+            float y_a_i_candidate = 0.0;
+            float D_candidate = D_candidates[D_idx];
+            
+            candidate_y = get_nu_dot(
+                f, 
+                x_v_i_candidate,
+                y_v_i_candidate,
+                x_a_i_candidate,
+                y_a_i_candidate,
+                X_i, 
+                Y_i,
+                mu_i, 
+                nu_i,  
+                v_e,
+                a_e,
+                omega_e,
+                alpha_e,
+                D_candidate,
+                gamma_i);
 
             if (first_iter){
                 best_y = candidate_y;
@@ -739,12 +929,150 @@ float optimize_nu_dot_i(
             }else if (!findmax && best_y > candidate_y){
                 best_y = candidate_y;
             }
-            theta_candidate += theta_stepsize;
         }
-        // }
     }
     return best_y;
+    //return D_MAX;
 }
+
+
+// __device__ 
+// float optimize_nu_dot_i(
+//             float f, 
+//             float mu_i,
+//             float nu_i, 
+//             float X_i_t, 
+//             float Y_i_t, 
+//             float v_e, 
+//             float psi_e, 
+//             float a_e, 
+//             float phi_e, 
+//             unsigned int N, 
+//             bool findmax,
+//             int8_t animated,
+//             float d_upper_bound,
+//             float d_lower_bound){
+
+//     // brute force over theta,
+//     // use boundary values for a_i, v_i, psi_e and D
+//     // since mu_dot is monotonomus w.r.t these 4 variables
+
+    
+//      // iterate over boundary values of a_i, v_i, psi_i and D,
+//     // brute force over theta
+
+//     // compute CHI
+//     // inverse squre root
+
+//     float CHI = rsqrtf(((X_i_t * X_i_t) / (f * f)) + 1.0f);
+
+//     // float D_MIN = 0.0f;
+//     // float D_MAX = d_depth_array;
+//     // calculate_D_bounds(
+//     //     f, 
+//     //     mu_i,        
+//     //     nu_i, 
+//     //     X_i_t,
+//     //     Y_i_t, 
+//     //     v_e, 
+//     //     psi_e, 
+//     //     CHI,
+//     //     &D_MIN,
+//     //     &D_MAX,
+//     //     animated);
+
+//     float a_i_candidates[2] = {A_MIN, A_MAX};
+//     float v_i_candidates[2] = {V_I_MIN, V_I_MAX};
+//     float psi_i_candidates[2] = {PSI_I_MIN, PSI_I_MAX};
+//     float D_candidates[2] ={d_upper_bound, d_lower_bound};
+//     float theta_candidate = 0.0f;
+//     float theta_stepsize = 2.0f * PI / (float)N;
+
+//     float best_y = 0.0f;
+//     bool first_iter = true; 
+//     float candidate_y;
+
+//     // non animate and animate objects
+//     if (animated){
+//         for (int a_i_idx = 0; a_i_idx < 2; a_i_idx ++){
+//             for (int v_i_idx = 0; v_i_idx < 2; v_i_idx ++){
+//                 for (int psi_i_idx = 0; psi_i_idx < 2; psi_i_idx ++){
+//                     for (int D_idx = 0; D_idx < 2; D_idx ++){
+//                         float a_i_candidate = a_i_candidates[a_i_idx];
+//                         float v_i_candidate = v_i_candidates[v_i_idx];
+//                         float psi_i_candidate = psi_i_candidates[psi_i_idx];
+//                         float D_candidate = D_candidates[D_idx];
+
+//                         for (int i = 0; i < N; i++){
+//                             candidate_y = eqn_54(a_i_candidate,
+//                                             f, 
+//                                             mu_i, 
+//                                             nu_i, 
+//                                             X_i_t,
+//                                             Y_i_t,
+//                                             v_i_candidate, 
+//                                             v_e, 
+//                                             psi_i_candidate,
+//                                             psi_e,
+//                                             a_e,
+//                                             theta_candidate,
+//                                             phi_e,
+//                                             CHI, 
+//                                             D_candidate);
+
+//                             if (first_iter){
+//                                 best_y = candidate_y;
+//                                 first_iter = false;
+//                             }
+//                             else if (findmax && best_y < candidate_y){
+//                                 best_y = candidate_y;
+//                             }else if (!findmax && best_y > candidate_y){
+//                                 best_y = candidate_y;
+//                             }
+//                             theta_candidate += theta_stepsize;
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//     }
+//     else {
+//         // for (int D_idx = 0; D_idx < 2; D_idx ++){
+//             // float D_candidate = D_candidates[D_idx];
+//         float D_candidate = d_upper_bound;
+
+//         for (int i = 0; i < N; i++){
+//             candidate_y = eqn_54(0.0f, //a_i_candidate,
+//                             f, 
+//                             mu_i, 
+//                             nu_i, 
+//                             X_i_t,
+//                             Y_i_t,
+//                             0.0f, //v_i_candidate, 
+//                             v_e, 
+//                             0.0f, //psi_i_candidate,
+//                             psi_e,
+//                             a_e,
+//                             theta_candidate,
+//                             phi_e,
+//                             CHI, 
+//                             D_candidate);
+
+//             if (first_iter){
+//                 best_y = candidate_y;
+//                 first_iter = false;
+//             }
+//             else if (findmax && best_y < candidate_y){
+//                 best_y = candidate_y;
+//             }else if (!findmax && best_y > candidate_y){
+//                 best_y = candidate_y;
+//             }
+//             theta_candidate += theta_stepsize;
+//         }
+//         // }
+//     }
+//     return best_y;
+// }
 
 
 __global__
@@ -753,12 +1081,12 @@ void certify_u_for_nu(
             float* mu_is,
             float* nu_is, 
             float* X_i_ts, 
-            float* Y_i_ts, 
+            float* Y_i_ts,
             float* offsets,
             float v_e, 
-            float psi_e, 
-            float a_e, 
-            float phi_e, 
+            float a_e,
+            float omega_e, 
+            float alpha_e, 
             unsigned int N_points,
             unsigned int N_pixels,
             bool* u_certified_for_nu,
@@ -766,29 +1094,30 @@ void certify_u_for_nu(
             float* nu_i_out,
             float* nu_dot_out,
             int8_t* animateds,
+            int8_t* rois, // area of interest?
             float* d_upper_bounds,
-            float* d_lower_bounds){
-
+            float* d_lower_bounds)
+{
     int blockId = blockIdx.x + blockIdx.y * gridDim.x;
     int tid = blockId * (blockDim.x * blockDim.y)
         + (threadIdx.y * blockDim.x) + threadIdx.x;
-
     
     if (tid >= IMG_H * IMG_W){
         return;
     } 
     
+    float X_i = X_i_ts[tid];
+    float Y_i = Y_i_ts[tid];
     float mu_i = mu_is[tid];
     float nu_i = nu_is[tid]; 
-    float X_i_t = X_i_ts[tid];
-    float Y_i_t = Y_i_ts[tid]; 
-    float offset = offsets[tid];
-    int8_t animated = animateds[tid];
     float d_upper_bound = d_upper_bounds[tid];
     float d_lower_bound = d_lower_bounds[tid];
+    float offset = offsets[tid];
+    int8_t animated = animateds[tid];
+    int8_t roi = rois[tid];
 
     nu_i_out[tid] = nu_i;
-    bool nu_find_upperbound = Y_i_t > Y_MIN; // pixel index 360, see whimsicle
+    bool nu_find_upperbound = Y_i > Y_MIN; // pixel index 360, see whimsicle
 
     // if (nu_find_upperbound && nu_i >= nu_b){
     //     float nu_upper = optimize_nu_dot_i(
@@ -809,19 +1138,24 @@ void certify_u_for_nu(
     //     u_certified_for_nu[tid] = nu_upper < -offset;
     //     nu_dot_out[tid] = nu_upper;
     // } else 
-    if (nu_find_upperbound && nu_i <= NU_B){
+    if (roi == 0){ // not a target -> skip computation
+        u_certified_for_nu[tid] = true;
+        nu_dot_out[tid] = 0.0f;
+        nu_b_out[tid] = 0.0f;
+    }
+    else if (nu_find_upperbound && nu_i <= NU_B){
         nu_b_out[tid] = NU_B;
-        float nu_lower = optimize_nu_dot_i(
+        float nu_lower = optimize_nu_dot_i2(
             f, 
+            X_i, 
+            Y_i, 
             mu_i,
             nu_i, 
-            X_i_t, 
-            Y_i_t, 
             v_e, 
-            psi_e, 
-            a_e, 
-            phi_e, 
-            N_points,
+            a_e,
+            omega_e,
+            alpha_e,
+            // unsigned int N,
             false,
             animated,
             d_upper_bound,
@@ -831,6 +1165,6 @@ void certify_u_for_nu(
     } else {
         u_certified_for_nu[tid] = true;
         nu_dot_out[tid] = 0.0f;
+        nu_b_out[tid] = 0.0f;
     }
-
 }

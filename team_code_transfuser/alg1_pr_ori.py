@@ -66,7 +66,6 @@ class Algorithm1:
         self.d_Ys = cuda.mem_alloc(self.fp32_vector_buffersize)
         self.d_offsets = cuda.mem_alloc(self.fp32_vector_buffersize)
         self.d_animateds = cuda.mem_alloc(self.bool_vector_buffersize)
-        self.d_rois = cuda.mem_alloc(self.bool_vector_buffersize)
         self.d_depth_upper_bound = cuda.mem_alloc(self.fp32_vector_buffersize)
         self.d_depth_lower_bound = cuda.mem_alloc(self.fp32_vector_buffersize)
 
@@ -96,7 +95,6 @@ class Algorithm1:
         self.nu_dot_outs = np.empty((self.N_pixels, ), dtype=np.float32)
         self.raw_data = np.zeros((self.camera_height, self.camera_width, 8))
         self.is_animated = np.empty((self.N_pixels, ), dtype=np.int8)
-        self.is_roi = np.empty((self.N_pixels, ), dtype=np.int8)
         self.depth_upper_bound = np.empty((self.N_pixels,), dtype=np.float32)
         self.depth_lower_bound = np.empty((self.N_pixels,), dtype=np.float32)
 
@@ -112,7 +110,7 @@ class Algorithm1:
         args = mu_i, nu_i, v_e, w_e, a_e, alpha_e
         """
         # unpack 
-        mu_i, nu_i, v_e, w_e, a_e, alpha_e, is_animated, is_roi, depth_upper_bound, depth_lower_bound = args
+        mu_i, nu_i, v_e, w_e, a_e, alpha_e, is_animated, depth_upper_bound, depth_lower_bound = args
 
         # copy inputs into cuda device
         cuda.memcpy_htod(self.d_mus, mu_i)
@@ -126,7 +124,6 @@ class Algorithm1:
         alpha_e = np.float32(alpha_e)
         self.gridsearchsize = np.intc(self.gridsearchsize)
         self.N_pixels = np.intc(self.N_pixels)
-        self.is_roi = np.int8(is_roi)
         self.is_animated = np.int8(is_animated)
         self.depth_upper_bound = np.float32(depth_upper_bound)
         self.depth_lower_bound = np.float32(depth_lower_bound)
@@ -135,21 +132,20 @@ class Algorithm1:
         # print(type(self.f))
 
         cuda.memcpy_htod(self.d_animateds, self.is_animated)
-        cuda.memcpy_htod(self.d_rois, self.is_roi)
         cuda.memcpy_htod(self.d_depth_upper_bound, self.depth_upper_bound)
         cuda.memcpy_htod(self.d_depth_lower_bound, self.depth_lower_bound)
 
         # call function
 
         pycuda.driver.Context.synchronize()
-        self.certify_u_for_mu(self.f, self.d_Xs, self.d_Ys, self.d_mus, self.d_nus, self.d_offsets, v_e, a_e, w_e, 
+        self.certify_u_for_mu(self.f, self.d_mus, self.d_nus, self.d_Xs, self.d_Ys, self.d_offsets, v_e, w_e, a_e,
                              alpha_e, self.gridsearchsize, self.N_pixels, self.d_mu_is_certifieds, self.d_mu_b_outs,
-                             self.d_mu_i_outs, self.d_mu_dot_outs, self.d_animateds, self.d_rois, self.d_depth_upper_bound, 
+                             self.d_mu_i_outs, self.d_mu_dot_outs, self.d_animateds, self.d_depth_upper_bound, 
                              self.d_depth_lower_bound, block=self.block_dim, grid=self.grid_dim)
         pycuda.driver.Context.synchronize()
-        self.certify_u_for_nu(self.f, self.d_Xs, self.d_Ys, self.d_mus, self.d_nus, self.d_offsets, v_e, a_e, w_e, 
+        self.certify_u_for_nu(self.f, self.d_mus, self.d_nus, self.d_Xs, self.d_Ys, self.d_offsets, v_e, w_e, a_e,
                              alpha_e, self.gridsearchsize, self.N_pixels, self.d_nu_is_certifieds, self.d_nu_b_outs,
-                             self.d_nu_i_outs, self.d_nu_dot_outs, self.d_animateds, self.d_rois, self.d_depth_upper_bound, 
+                             self.d_nu_i_outs, self.d_nu_dot_outs, self.d_animateds, self.d_depth_upper_bound, 
                              self.d_depth_lower_bound, block=self.block_dim, grid=self.grid_dim)
         pycuda.driver.Context.synchronize()
 
@@ -188,8 +184,8 @@ class Algorithm1:
         # # visualize certified pixels
         # cv.imshow("certified mu", np.repeat(self.mu_is_certifieds[:, :, np.newaxis].astype(np.uint8) * 255, 3, axis=2))
         # cv.imshow("certified nu", np.repeat(self.nu_is_certifieds[:, :, np.newaxis].astype(np.uint8) * 255, 3, axis=2))
-        # if cv.waitKey(1) == 2:
-        #     pass
+        if cv.waitKey(1) == 27:
+            pass
 
         return np.logical_and(self.mu_is_certifieds, self.nu_is_certifieds), self.raw_data
         # return 0,0

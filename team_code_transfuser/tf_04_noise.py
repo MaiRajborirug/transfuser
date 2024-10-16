@@ -184,7 +184,15 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
                         'roll': self.config.camera_rot_0[0], 'pitch': self.config.camera_rot_0[1], 'yaw': self.config.camera_rot_0[2],
                         'width': self.config.camera_width, 'height': self.config.camera_height, 'fov': self.config.camera_fov,
                         'id': 'semantics_front'
-                    }
+                    },
+                    # {
+                    #     'type': 'sensor.camera.dvs',
+                    #     'x': self.config.camera_pos[0], 'y': self.config.camera_pos[1], 'z':self.config.camera_pos[2],
+                    #     'roll': self.config.camera_rot_0[0], 'pitch': self.config.camera_rot_0[1], 'yaw': self.config.camera_rot_0[2],
+                    #     'width': self.config.camera_width, 'height': self.config.camera_height, 'fov': self.config.camera_fov,
+                    #     'id': 'dvs_front'
+                    # },
+                    
                     
                     ]
         if(SAVE_PATH != None): #Debug camera for visualizations
