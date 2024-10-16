@@ -1,10 +1,10 @@
 
 #define PI 3.141592654f
 #define V_I_MIN 0.0f 
-#define V_I_MAX 10.0f  // -V
+#define V_I_MAX 4.0f  // -V
 
-#define A_MIN -10.0f // -A
-#define A_MAX 6.0f
+#define A_MIN -1.0f // -A
+#define A_MAX 1.0f
 
 #define PSI_I_MIN -0.1f
 #define PSI_I_MAX 0.1f
@@ -19,7 +19,7 @@
 #define H_BAR 2.3f // ~ position at the floor
 
 #define IMG_W 960
-#define IMG_H 720
+#define IMG_H 480
 
 
 __device__ 
@@ -315,6 +315,16 @@ float eqn_54(float a_i,
     //return f;
 }
 
+
+
+
+
+
+
+
+
+
+
 // __device__
 // void solve_eqn_60_for_0(float f, float X_i_t, float* theta_candidates){
 //     float theta = atanf(X_i_t / f);
@@ -333,6 +343,34 @@ float eqn_54(float a_i,
 // void solve_eqn_59_for_0(float f, float X_i_t, float* theta_candidates){
 //     solve_theta_guess_from_59(f, X_i_t, theta_candidates);
 // }
+
+__device__
+float get_mu_dot(
+            float f, 
+            float x_v_i,
+            float y_v_i,
+            float x_a_i,
+            float y_a_i,
+            float X_i, 
+            float Y_i,
+            float mu_i, 
+            float nu_i,  
+            float v_e,
+            float a_e,
+            float omega_e,
+            float alpha_e,
+            float D_i,
+            float gamma_i)
+{
+    // float gamma_i =  sqrtf(((X_i * X_i) / (f * f)) + 1.0f);
+    float term1 = gamma_i * X_i / D_i * (-x_a_i - 2 * omega_e * y_v_i + a_e);
+    float term2 = gamma_i * f / D_i * (y_a_i + 2 * omega_e * x_v_i + omega_e * v_e);
+    float term3 = - gamma_i * gamma_i * alpha_e;
+    float term4 = 2*mu_i*nu_i/Y_i;
+    return term1 + term2 + term3 + term4;
+}
+
+
 
 __device__
 float optimize_mu_dot_i(
@@ -554,6 +592,22 @@ void certify_u_for_mu(
     
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 __device__
 float eqn_55(float a_i,
             float f, 
@@ -581,6 +635,33 @@ float eqn_55(float a_i,
     float term7 = -Y_i_t * psi_i * v_i * sinf(theta) / D_CHI;
     return term1 + term2 + term3 + term4 + term5 + term6 + term7;
     //return term1;
+}
+
+
+__device__
+float get_nu_dot(
+            float f, 
+            float x_v_i,
+            float y_v_i,
+            float x_a_i,
+            float y_a_i,
+            float X_i, 
+            float Y_i,
+            float mu_i, 
+            float nu_i,  
+            float v_e,
+            float a_e,
+            float omega_e,
+            float alpha_e,
+            float D_i,
+            float gamma_i)
+{
+    // float gamma_i =  sqrtf(((X_i * X_i) / (f * f)) + 1.0f);
+    float term1 = gamma_i * Y_i / D_i * (-x_a_i - 2 * omega_e * y_v_i + a_e);
+    float term2 = omega_e * omega_e * Y_i;
+    float term3 = - alpha_e * X_i * Y_i / f;
+    float term4 = nu_i * nu_i / Y_i;
+    return term1 + term2 + term3 + term4;
 }
 
 __device__ 

@@ -1,7 +1,7 @@
 
 #define PI 3.141592654f
 #define V_I_MIN 0.0f 
-#define V_I_MAX 3.0f  // -V
+#define V_I_MAX 4.0f  // -V
 
 // #define A_MIN -10.0f // -A
 // #define A_MAX 6.0f
@@ -746,6 +746,19 @@ void certify_u_for_mu(
         mu_dot_out[tid] = 0.0f; 
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 __device__
 float eqn_55(float a_i,
