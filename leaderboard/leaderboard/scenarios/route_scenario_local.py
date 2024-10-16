@@ -298,7 +298,7 @@ class RouteScenario(BasicScenario):
 
             if idx > 0:
                 world.debug.draw_line(waypoints[idx-1][0].location + carla.Location(z=vertical_shift),
-                                    wp, thickness=size/2,
+                                    wp, thickness=size/4,
                                     color=carla.Color(255, 0, 0), life_time=persistency)
                 world.debug.draw_line(wp + carla.Location(z=-0.01),
                                 wp, thickness=size,

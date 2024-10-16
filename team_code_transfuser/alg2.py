@@ -38,7 +38,7 @@ class Algorithm2:
                             #  ranges=((self.a_bounds[0] + a_nom, self.a_bounds[1] + a_nom), (self.alpha_bounds[0] + alpha_nom, self.alpha_bounds[1] + alpha_nom)),
                             ranges=((self.a_bounds[0], self.a_bounds[1]), (self.alpha_bounds[0], self.alpha_bounds[1])),
                              args=args,
-                             Ns=3,
+                             Ns=5,
                              finish=None,
                              full_output=True)
 

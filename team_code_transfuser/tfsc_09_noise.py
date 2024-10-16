@@ -27,7 +27,7 @@ from optical_flow import optical_flow
 # from segmentation import segmentation
 from rgb_seg import UNet, Unetpad, group_segment
 
-
+import alg1_objavoid3
 from alg1_pr import Algorithm1 #
 from alg2 import Algorithm2
 from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
@@ -133,11 +133,14 @@ class agent(HybridAgent):
         # self.certification_offset = np.full((self.camera_height, self.camera_width), -1000000)
 
         # NOTE: define safety certificate solver edit 09/27 add path here
-        self.cuda_path = '/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_objavoid.cu' # obstacle avoidance path
-        self.alg1_solver = Algorithm1(self.focal_len, (self.camera_width, self.camera_height), self.X, self.Y, self.certification_offset, self.cuda_path)
+        # self.cuda_path = '/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_objavoid.cu' # obstacle avoidance path
+        # self.alg1_solver = Algorithm1(self.focal_len, (self.camera_width, self.camera_height), self.X, self.Y, self.certification_offset, self.cuda_path)
+        self.cuda_path = '/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_objavoid3.cu' # obstacle avoidance path
+        self.alg1_solver = alg1_objavoid3.Algorithm1(self.focal_len, (self.camera_width, self.camera_height), self.X, self.Y, self.certification_offset, self.cuda_path)
+        self.alg2_solver = Algorithm2()
+        
         self.cuda_path_follow = '/media/haoming/970EVO/pharuj/git/transfuser/team_code_transfuser/alg1_pr_tarfollow2.cu' # obstacle avoidance path
         self.alg1_solver_follow = Algorithm1(self.focal_len, (self.camera_width, self.camera_height), self.X, self.Y, self.certification_offset, self.cuda_path_follow)
-        
         self.alg2_solver_follow = Algorithm2()
         
         
@@ -177,6 +180,9 @@ class agent(HybridAgent):
         returns: control 
         see https://carla.readthedocs.io/en/latest/python_api/#carlavehiclecontrol
         """
+        
+        start_time = time.time() 
+        
         # NOTE: for cruise controller -------
         self.a_e = input_data["imu"][1][0]
         self.v_e = np.maximum(0,input_data["speed"][1]["speed"])
@@ -208,9 +214,17 @@ class agent(HybridAgent):
         # print(f"[{self.v_e:.5f}, {input_data['imu'][1][5]:.5f}, {control.steer:.2f}],")
         # return control
         
+        
+        prefollow_time = time.time()
+        
         # for fast testing, since the vehicle only run after step ~ 50, we can skip the first 50 steps
         if self._step < 60:
+            self.start_time = time.time()
             return control
+        
+        if self._step >1:
+            print(f"step:{self._step}, op_time:{time.time()-self.start_time:.3f}")
+            self.start_time = time.time()
         
         # NOTE: optical flow output
         self.bgr_ = input_data["rgb_front"][1][:, :, :3]  # rgb to rgb_front
@@ -225,7 +239,8 @@ class agent(HybridAgent):
         # self.resize_visualize(group_label, 'segment label', binary_input=False)
         
         # NOTE: visualize raw input
-        # self.resize_visualize(self.bgr_, 'input', binary_input=False)  # NOTE: debug attempt
+        self.resize_visualize(self.bgr_, 'input', binary_input=False)  # NOTE: debug attempt
+        cv2.waitKey(1)
         
         """
         # NOTE: monodepth2 estimation------
@@ -373,8 +388,9 @@ class agent(HybridAgent):
         self.nominal_pixel_is_certifieds[:threshold,:]=1    
         
         
-        # # NOTE: visualize target following ----
-        # self.resize_visualize(self.nominal_pixel_is_certifieds, 'target not follow before update')
+        # NOTE: visualize target following ----
+        self.resize_visualize(self.nominal_pixel_is_certifieds, 'target not follow before update')
+        
         
         # # return control
         # print(f"{self._step}, v:{self.v_e:.2f}, a:{self.a_e:.2f}, w:{self.w_e:.2f}, alpha:{self.alpha_e:.2f}, "
@@ -384,7 +400,11 @@ class agent(HybridAgent):
         if self.nominal_pixel_is_certifieds.sum() == self.nominal_pixel_is_certifieds.size: #> self.certify_threshold:
             delta = np.clip(math.sqrt(max(0,self.v_e)) * self.c_speed_sqrt + self.a_e * self.c_acc + self.w_e**2 * self.c_w_sq + abs(self.w_e) * self.c_w, 0.0, 0.25)
             _ = self.throttle_controller.step(delta)
+            
+            post_followtime = time.time()
 
+            # print(f"step: {self.step}, pre follow time: {prefollow_time-start_time:.3f}, "
+            #     f"postfollow time: {time.time() - prefollow_time:.3f}")
         
         else:
             nominal_control = (self.a_e, self.alpha_e)
@@ -427,7 +447,9 @@ class agent(HybridAgent):
                 # steer = self.turn_controller.step(steer) # finally we want to have steer ~ 0
                 steer = np.clip(steer, -1.0, 1.0)
 
-                # print(f'follow:{self._step}, w_e:{self.w_e:.3e}, old/new_alpha:{self.alpha_e:.3f}/{alpha_control:.3f}, old/new_steer: {control.steer:.2f}/{steer:.3f}')
+                print(f'follow:{self._step}, w_e:{self.w_e:.3e}, old/new_alpha:{self.alpha_e:.3f}/{alpha_control:.3f}, old/new_steer: {control.steer:.2f}/{steer:.3f}')
+                print(f"step: {self.step}, pre follow time: {prefollow_time-start_time:.3f}, "
+                      f"postfollow time: {time.time() - prefollow_time:.3f}")
                 
                 control.steer =  steer
                 # update the target following plot
@@ -501,12 +523,12 @@ class agent(HybridAgent):
                 # ------
                 """
                 
-                # # NOTE: visualize target following
-                # self.nominal_pixel_is_certifieds = np.logical_or(1-is_wp, self.nominal_pixel_is_certifieds) # remove road pixels
-                # H_ = self.nominal_pixel_is_certifieds.shape[0]
-                # threshold = int(0.79* H_)
-                # self.nominal_pixel_is_certifieds[:threshold,:]=1
-                # self.resize_visualize(self.nominal_pixel_is_certifieds, 'target not follow after update', cert=False)
+                # NOTE: visualize target following
+                self.nominal_pixel_is_certifieds = np.logical_or(1-is_wp, self.nominal_pixel_is_certifieds) # remove road pixels
+                H_ = self.nominal_pixel_is_certifieds.shape[0]
+                threshold = int(0.79* H_)
+                self.nominal_pixel_is_certifieds[:threshold,:]=1
+                self.resize_visualize(self.nominal_pixel_is_certifieds, 'target not follow after update', cert=False)
             
                 """
                 NOTE: debug attempt
@@ -547,7 +569,7 @@ class agent(HybridAgent):
                     plt.show()
                     breakpoint()
                 """   
-                # cv2.waitKey(1)
+                cv2.waitKey(1)
                 return control # --> return obj avoidance control
         
         # cv2.waitKey(1)

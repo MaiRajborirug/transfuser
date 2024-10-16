@@ -21,10 +21,10 @@
 #define IMG_W 960
 #define IMG_H 480
 
-#define Y_MIN 0.00f // Y > Y_MIN for target following 0.01
-#define X_RANGE 0.002f // X < -X_RANGE or X > X_RANGE for target following 0.004
-#define MU_B 0.025f // 0.025
-#define NU_B -0.01f //-0.03
+#define Y_MIN 0.0015f // Y > Y_MIN for target following 0.01
+#define X_RANGE 0.005f // X < -X_RANGE or X > X_RANGE for target following 0.004
+#define MU_B 0.02f // 0.025
+#define NU_B -0.00f //-0.03
 #define MU_DOT_B 0.1f
 
 __device__
@@ -653,10 +653,10 @@ float optimize_mu_dot_i2(
 __global__
 void certify_u_for_mu(
             float f, 
-            float* mu_is,
-            float* nu_is, 
             float* X_i_ts, 
             float* Y_i_ts,
+            float* mu_is,
+            float* nu_is, 
             float* offsets,
             float v_e, 
             float a_e,
@@ -1091,10 +1091,10 @@ float optimize_nu_dot_i2(
 __global__
 void certify_u_for_nu(
             float f, 
-            float* mu_is,
-            float* nu_is, 
             float* X_i_ts, 
             float* Y_i_ts,
+            float* mu_is,
+            float* nu_is, 
             float* offsets,
             float v_e, 
             float a_e,
