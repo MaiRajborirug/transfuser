@@ -290,7 +290,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         # save lidar into folder
         # np.save(os.path.join(SAVE_PATH, 'lidar_'+str(self.step)+'.npy'), input_data['lidar'][1])
         # print('shape:', lidar_temp.shape)
-        print(self.step)
+        # print(self.step)
         
         temp1 = lidar_temp[0, 0]
         N, _ = lidar_temp.shape
@@ -319,7 +319,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
         mask_not_satisfy = mask_satisfy ==0
         
         # NOTE: visualize data
-        self.hocbf._update_lidar_plt(lidar_data, mask_satisfy, mask_not_satisfy)
+        # self.hocbf._update_lidar_plt(lidar_data, mask_satisfy, mask_not_satisfy)
         
         # pass the condition, no need to optimize
         
@@ -503,7 +503,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
             #----------
             # NOTE: map (a, phi) back to carla control (throttle, steering, break)
             if abs(a_e_opt) < steer_opt * 3: # prioritize turning arbitary comparison
-                print('sc case 1: a_e-> throttle')
+                # print('sc case 1: a_e-> throttle')
                 # throttle mapping
                 a_control = a_e # before optimize        
                 delta = np.clip(math.sqrt(v_e) * self.hocbf.c_speed_sqrt + a_control * self.hocbf.c_acc + self.w_e**2 * self.hocbf.c_w_sq + abs(self.w_e) * self.hocbf.c_w, 0.0, 0.25)
@@ -516,7 +516,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
                 # steer = np.clip(steer,-1,1)
             
             elif a_e_opt > -2: # prioritize throttle
-                print('sc case 2: a_e_opt-> throttle')
+                # print('sc case 2: a_e_opt-> throttle')
                 # throttle mapping           
                 delta = np.clip(math.sqrt(v_e) * self.hocbf.c_speed_sqrt + a_e_opt * self.hocbf.c_acc + self.w_e**2 * self.hocbf.c_w_sq + abs(self.w_e) * self.hocbf.c_w, 0.0, 0.25)
                 throttle = self.hocbf.throttle_controller.step(delta)
@@ -529,7 +529,7 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
                 # steer = self._calculate_steer(v_e, desire_w)
 
             else:
-                print('sc case 3: brake')
+                # print('sc case 3: brake')
                 throttle = 0
                 brake = 1
                 steer_opt = 0
@@ -540,12 +540,12 @@ class HybridAgent(autonomous_agent.AutonomousAgent):
             control.throttle = throttle # np.minimum(throttle, control.throttle)
             control.brake = np.maximum(brake, control.brake)
              # # ---- Update Control ----
-            print(f"Nom->CBF : a{a_e:.2f}->{a_e_opt:.2f}, th{throttle_tf:.2f}->{control.throttle:.2f}, st{steer_tf:.2f}->{control.steer:.2f}")
-            print(f"Nom %->CBF%: {np.mean(self.hocbf._constraint(lidar_data, steer_tf, v_e, a_e)):.3f}->{np.mean(self.hocbf._constraint(lidar_data, control.steer, v_e, a_e_opt)):.3f}")
+            # print(f"Nom->CBF : a{a_e:.2f}->{a_e_opt:.2f}, th{throttle_tf:.2f}->{control.throttle:.2f}, st{steer_tf:.2f}->{control.steer:.2f}")
+            # print(f"Nom %->CBF%: {np.mean(self.hocbf._constraint(lidar_data, steer_tf, v_e, a_e)):.3f}->{np.mean(self.hocbf._constraint(lidar_data, control.steer, v_e, a_e_opt)):.3f}")
             ##----------
-        else:
-            print(f"Nom : a{a_e:.2f}, th{throttle_tf:.2f}, st{steer_tf:.2f}")
-            print(f"Nom %: {np.mean(self.hocbf._constraint(lidar_data, steer_tf, v_e, a_e)):.3f}")
+        # else:
+        #     print(f"Nom : a{a_e:.2f}, th{throttle_tf:.2f}, st{steer_tf:.2f}")
+        #     print(f"Nom %: {np.mean(self.hocbf._constraint(lidar_data, steer_tf, v_e, a_e)):.3f}")
         return control
 
     def bb_detected_in_front_of_vehicle(self, ego_speed):
@@ -965,7 +965,7 @@ class HOCBF():
         # Keep only the n closest points
         lidar_data = lidar_data[closest_indices]
         
-        print(f"num pointcloud: pre1frame={len(self.lidar_data_prev)}, step={step}, post2frame={len(lidar_data)}")
+        # print(f"num pointcloud: pre1frame={len(self.lidar_data_prev)}, step={step}, post2frame={len(lidar_data)}")
         
         return lidar_data
     

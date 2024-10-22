@@ -38,8 +38,9 @@ class Algorithm1:
         self.camera_width, self.camera_height = camera_intrinsics
         self.X, self.Y = np.float32(X), np.float32(Y)
         self.certification_offset = np.float32(certification_offset)
-        
-        self.gridsearchsize = 50 # no longer used
+
+        # define number of steps when doing grid search best object angle theta
+        self.gridsearchsize = 50 # 
 
         # number of pixels
         self.N_pixels = X.size
@@ -51,27 +52,27 @@ class Algorithm1:
         self.grid_dim = (30, 32)
 
         # setup cuda kernel
-        self.certify_u_for_r2 = kernel.get_function("certify_u_for_r2")
-
+        self.certify_u = kernel.get_function("certify_u")
 
         # buffer size calculations
         self.fp32_vector_buffersize = self.N_pixels * 4
         self.bool_vector_buffersize = self.N_pixels
 
         # allocate memory for cuda
-        self.d_mus = cuda.mem_alloc(self.fp32_vector_buffersize)
-        self.d_nus = cuda.mem_alloc(self.fp32_vector_buffersize)
+        # self.d_mus = cuda.mem_alloc(self.fp32_vector_buffersize)
+        # self.d_nus = cuda.mem_alloc(self.fp32_vector_buffersize)
         self.d_Xs = cuda.mem_alloc(self.fp32_vector_buffersize)
         self.d_Ys = cuda.mem_alloc(self.fp32_vector_buffersize)
-        self.d_offsets = cuda.mem_alloc(self.fp32_vector_buffersize)
+        # self.d_offsets = cuda.mem_alloc(self.fp32_vector_buffersize)
         self.d_animateds = cuda.mem_alloc(self.bool_vector_buffersize)
-        self.d_rois = cuda.mem_alloc(self.bool_vector_buffersize)
+        self.d_wps = cuda.mem_alloc(self.bool_vector_buffersize)
+        self.d_obstacles = cuda.mem_alloc(self.bool_vector_buffersize)
+        
         self.d_depth_upper_bound = cuda.mem_alloc(self.fp32_vector_buffersize)
         self.d_depth_lower_bound = cuda.mem_alloc(self.fp32_vector_buffersize)
 
         # result buffer
-        self.d_u_is_certifieds = cuda.mem_alloc(self.bool_vector_buffersize)
-        self.d_r2_outs = cuda.mem_alloc(self.fp32_vector_buffersize)
+        self.d_is_certifieds = cuda.mem_alloc(self.bool_vector_buffersize)
         # self.d_mu_is_certifieds = cuda.mem_alloc(self.bool_vector_buffersize)
         # self.d_nu_is_certifieds = cuda.mem_alloc(self.bool_vector_buffersize)
         # self.d_mu_b_outs = cuda.mem_alloc(self.fp32_vector_buffersize)
@@ -84,19 +85,19 @@ class Algorithm1:
         # copy inputs into cuda device
         cuda.memcpy_htod(self.d_Xs, self.X)
         cuda.memcpy_htod(self.d_Ys, self.Y)
-        cuda.memcpy_htod(self.d_offsets, self.certification_offset)
+        # cuda.memcpy_htod(self.d_offsets, self.certification_offset)
 
         # create result numpy arrays
         self.u_is_certifieds = np.empty((self.N_pixels, ), dtype=np.bool)
-        self.r2_outs = np.empty((self.N_pixels, ), dtype=np.float32)
-        # self.mu_is_certifieds = np.empty((self.N_pixels, ), dtype=np.bool)
-        # self.nu_is_certifieds = np.empty((self.N_pixels, ), dtype=np.bool)
-        # self.mu_b_outs = np.empty((self.N_pixels, ), dtype=np.float32)
-        # self.nu_b_outs = np.empty((self.N_pixels, ), dtype=np.float32)
-        # self.mu_i_outs = np.empty((self.N_pixels, ), dtype=np.float32)
-        # self.nu_i_outs = np.empty((self.N_pixels, ), dtype=np.float32)
-        # self.mu_dot_outs = np.empty((self.N_pixels, ), dtype=np.float32)
-        # self.nu_dot_outs = np.empty((self.N_pixels, ), dtype=np.float32)
+        
+        self.mu_is_certifieds = np.empty((self.N_pixels, ), dtype=np.bool)
+        self.nu_is_certifieds = np.empty((self.N_pixels, ), dtype=np.bool)
+        self.mu_b_outs = np.empty((self.N_pixels, ), dtype=np.float32)
+        self.nu_b_outs = np.empty((self.N_pixels, ), dtype=np.float32)
+        self.mu_i_outs = np.empty((self.N_pixels, ), dtype=np.float32)
+        self.nu_i_outs = np.empty((self.N_pixels, ), dtype=np.float32)
+        self.mu_dot_outs = np.empty((self.N_pixels, ), dtype=np.float32)
+        self.nu_dot_outs = np.empty((self.N_pixels, ), dtype=np.float32)
         self.raw_data = np.zeros((self.camera_height, self.camera_width, 8))
         self.is_animated = np.empty((self.N_pixels, ), dtype=np.int8)
         self.is_roi = np.empty((self.N_pixels, ), dtype=np.int8)
@@ -115,44 +116,45 @@ class Algorithm1:
         args = mu_i, nu_i, v_e, w_e, a_e, alpha_e
         """
         # unpack 
-        mu_i, nu_i, v_e, w_e, a_e, alpha_e, is_animated, is_roi, depth_upper_bound, depth_lower_bound = args
+        
+        # mu_i, nu_i, v_e, w_e, a_e, alpha_e, is_animated, is_wp, is_obstacle, depth_upper_bound, depth_lower_bound = args
+        v_e, w_e, a_e, is_animated, is_wp, is_obstacle, depth_upper_bound, depth_lower_bound = args
 
-        # copy inputs into cuda device
-        cuda.memcpy_htod(self.d_mus, mu_i)
-        cuda.memcpy_htod(self.d_nus, nu_i)
+        # # copy inputs into cuda device
+        # cuda.memcpy_htod(self.d_mus, mu_i)
+        # cuda.memcpy_htod(self.d_nus, nu_i)
 
         # setup arguments for the kernel
         # convert all numbers to np.number
         v_e = np.float32(v_e)
         w_e = np.float32(w_e)
         a_e = np.float32(a_e)
-        alpha_e = np.float32(alpha_e)
-        self.gridsearchsize = np.intc(self.gridsearchsize)
-        self.N_pixels = np.intc(self.N_pixels)
-        self.is_roi = np.int8(is_roi)
+        # alpha_e = np.float32(alpha_e)
+        # self.gridsearchsize = np.intc(self.gridsearchsize)
+        # self.N_pixels = np.intc(self.N_pixels)
+        
+        self.is_obstacle  = np.int8(is_obstacle)
+        self.is_wp = np.int8(is_wp)
         self.is_animated = np.int8(is_animated)
         self.depth_upper_bound = np.float32(depth_upper_bound)
         self.depth_lower_bound = np.float32(depth_lower_bound)
-        # print("focal length: ", self.f)
-        # print("Type of f: ")
-        # print(type(self.f))
 
         cuda.memcpy_htod(self.d_animateds, self.is_animated)
-        cuda.memcpy_htod(self.d_rois, self.is_roi)
+        cuda.memcpy_htod(self.d_wps, self.is_wp)
+        cuda.memcpy_htod(self.d_obstacles, self.is_obstacle)
         cuda.memcpy_htod(self.d_depth_upper_bound, self.depth_upper_bound)
         cuda.memcpy_htod(self.d_depth_lower_bound, self.depth_lower_bound)
 
         # call function
+
         pycuda.driver.Context.synchronize()
-        self.certify_u_for_r2(self.f, self.d_Xs, self.d_Ys, self.d_mus, self.d_nus, self.d_offsets, v_e, a_e, w_e, 
-                             alpha_e, self.gridsearchsize, self.N_pixels, self.d_u_is_certifieds, self.d_r2_outs, self.d_animateds, self.d_rois, self.d_depth_upper_bound, 
-                             self.d_depth_lower_bound, block=self.block_dim, grid=self.grid_dim)
-        pycuda.driver.Context.synchronize()
+        self.certify_u(self.f, self.d_Xs, self.d_Ys, v_e, w_e, a_e, self.d_is_certifieds, self.d_animateds, self.d_wps, 
+                       self.d_obstacles, self.d_depth_upper_bound, self.d_depth_lower_bound, block=self.block_dim, grid=self.grid_dim)
         # self.certify_u_for_mu(self.f, self.d_Xs, self.d_Ys, self.d_mus, self.d_nus, self.d_offsets, v_e, a_e, w_e, 
         #                      alpha_e, self.gridsearchsize, self.N_pixels, self.d_mu_is_certifieds, self.d_mu_b_outs,
         #                      self.d_mu_i_outs, self.d_mu_dot_outs, self.d_animateds, self.d_rois, self.d_depth_upper_bound, 
         #                      self.d_depth_lower_bound, block=self.block_dim, grid=self.grid_dim)
-        # pycuda.driver.Context.synchronize()
+        pycuda.driver.Context.synchronize()
         # self.certify_u_for_nu(self.f, self.d_Xs, self.d_Ys, self.d_mus, self.d_nus, self.d_offsets, v_e, a_e, w_e, 
         #                      alpha_e, self.gridsearchsize, self.N_pixels, self.d_nu_is_certifieds, self.d_nu_b_outs,
         #                      self.d_nu_i_outs, self.d_nu_dot_outs, self.d_animateds, self.d_rois, self.d_depth_upper_bound, 
@@ -160,8 +162,6 @@ class Algorithm1:
         # pycuda.driver.Context.synchronize()
 
         # move results into host memory
-        cuda.memcpy_dtoh(self.u_is_certifieds, self.d_u_is_certifieds)
-        cuda.memcpy_dtoh(self.r2_outs, self.d_r2_outs)
         # cuda.memcpy_dtoh(self.mu_is_certifieds, self.d_mu_is_certifieds)
         # cuda.memcpy_dtoh(self.nu_is_certifieds, self.d_nu_is_certifieds)
         # cuda.memcpy_dtoh(self.mu_b_outs, self.d_mu_b_outs)
@@ -170,14 +170,13 @@ class Algorithm1:
         # cuda.memcpy_dtoh(self.nu_i_outs, self.d_nu_i_outs)
         # cuda.memcpy_dtoh(self.mu_dot_outs, self.d_mu_dot_outs)
         # cuda.memcpy_dtoh(self.nu_dot_outs, self.d_nu_dot_outs)
-
+        
+        cuda.memcpy_dtoh(self.u_is_certifieds, self.d_is_certifieds)
         self.u_is_certifieds = self.u_is_certifieds.reshape((self.camera_height, self.camera_width))
-        self.r2_outs = self.r2_outs.reshape((self.camera_height, self.camera_width))
+
         # self.mu_is_certifieds = self.mu_is_certifieds.reshape((self.camera_height, self.camera_width))
         # self.nu_is_certifieds = self.nu_is_certifieds.reshape((self.camera_height, self.camera_width))
 
-        self.raw_data[:, :, 0] = self.u_is_certifieds.astype(np.float32)
-        self.raw_data[:, :, 1] = self.r2_outs.astype(np.float32)
         # self.raw_data[:, :, 0] = self.mu_is_certifieds.astype(np.float32)
         # self.raw_data[:, :, 1] = self.nu_is_certifieds.astype(np.float32)
         # self.raw_data[:, :, 2] = self.mu_b_outs.reshape((self.camera_height, self.camera_width))

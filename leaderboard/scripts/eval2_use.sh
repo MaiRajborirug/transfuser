@@ -18,7 +18,7 @@ export CHALLENGE_TRACK_CODENAME=MAP # SENSORS, MAP
 export ROUTES=/media/haoming/970EVO/pharuj/git/transfuser/leaderboard/data/longest6/longest6_crashes2.xml
 
 # tfcbf_09_noise / tf_04_noise / tfsc_04_noise / tfsc_09_noise
-export TEAM_AGENT=${WORK_DIR}/team_code_transfuser/tfsc_09_noise.py
+export TEAM_AGENT=${WORK_DIR}/team_code_transfuser/tfsc_10_noise.py
 
 export TEAM_CONFIG=/media/haoming/970EVO/pharuj/transfuser_training/model_ckpt/models_2023/Transfuser_newweights/TransFuserAllTownsNoZeroNoSyncZGSeed1
 export DEBUG_CHALLENGE=1 # for showing wp
@@ -36,7 +36,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Loop for changing noise (if required, you can modify NOISE loop logic)
-for NOISE in $(seq 0.0 0.1 0.0) # increment by 0.1 up to 1.0
+for NOISE in $(seq 0.0 0.1 0.0) # increment by (start, step, end)
 do
     export NOISE
     

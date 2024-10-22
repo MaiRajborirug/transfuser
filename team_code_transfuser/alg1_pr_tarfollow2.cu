@@ -22,8 +22,8 @@
 #define IMG_H 480
 
 #define Y_MIN 0.0015f // Y > Y_MIN for target following 0.01
-#define X_RANGE 0.005f // X < -X_RANGE or X > X_RANGE for target following 0.004
-#define MU_B 0.02f // 0.025
+#define X_RANGE 0.003f // X < -X_RANGE or X > X_RANGE for target following 0.004
+#define MU_B 0.023f // 0.025
 #define NU_B -0.00f //-0.03
 #define MU_DOT_B 0.1f
 
